@@ -1,0 +1,72 @@
+# Project Context & Rules
+
+## 0. Communication Protocol (CRITICAL)
+- **Language**: You must **ALWAYS** communicate with the user in **Simplified Chinese (简体中文)**, regardless of the language of the code or this document.
+- **Tone**: Professional, concise, and helpful. Acts as a senior iOS Architect.
+
+---
+
+## 1. Project Overview
+- **Name**: Wing
+- **Type**: iOS/iPadOS Journaling App
+- **Core Concept**: A privacy-focused, "feather-light" AI journal.
+- **Workflow**: 
+  1. **Silent Recording (Daytime)**: User inputs fragmented thoughts/images locally. No AI API calls. Instant local storage.
+  2. **AI Synthesis (End of Day)**: User triggers "End Day". App sends all fragments to LLM to generate a structured diary entry, mood analysis, and extracts To-Dos.
+  3. **Sync**: Diaries are backed up via WebDAV; To-Dos are synced to Apple Reminders (EventKit).
+
+## 2. Tech Stack & Environment
+- **Platform**: iOS 17+, iPadOS 17+
+- **Language**: Swift 5.9+
+- **UI Framework**: SwiftUI (using modern APIs like `NavigationStack`, `ScrollTargetBehavior`, `@Observable` is preferred but `@Model` is mandatory for data).
+- **Data Persistence**: **SwiftData** (Core framework).
+- **Architecture**: MVVM (Model-View-ViewModel).
+- **AI Integration**: OpenAI API (JSON Mode enforced).
+- **System Integration**: 
+  - `EventKit` (Reminders).
+  - `PhotosUI` (Image Picker).
+  - `FileManager` (Local image storage).
+- **Networking**: Native `URLSession` / `WebDAV` protocol.
+
+## 3. Key Operational Rules (Business Logic)
+
+### A. Silent Recording Mode (Local First)
+- **Behavior**: When user sends a message, DO NOT call OpenAI API.
+- **Action**: 
+  1. Save content to SwiftData `RawFragment` entity.
+  2. Show a "Green Checkmark" animation (Optimistic UI).
+  3. Clear input field immediately.
+- **Goal**: Zero latency, privacy, battery saving.
+
+### B. AI Synthesis Mode (JSON Output)
+- **Trigger**: Explicit user command "End Diary" or button tap.
+- **Prompting**: System Prompt must enforce **Strict JSON** output.
+- **Output Structure**:
+  - `title`: String
+  - `mood`: Emoji String
+  - `summary`: String
+  - `content_markdown`: Markdown String (keep `[Image]` placeholders)
+  - `insights`: String (Psychological analysis)
+  - `todos`: Array of objects `{ title, priority }`
+
+### C. Data Models (SwiftData)
+- **`DailySession`**: Holds the date and status (`recording`, `processed`).
+- **`RawFragment`**: The individual chat bubbles (Text/Image).
+- **`WingEntry`**: The final generated journal entry.
+
+## 4. Coding Standards
+- **SwiftUI**: Use declarative syntax. Avoid `UIViewRepresentable` unless necessary.
+- **Styling**: Minimalist, "Ethereal" aesthetic. Lots of whitespace, native fonts (Serif for titles, Sans-serif for body).
+- **Error Handling**: Graceful degradation. If WebDAV fails, save locally and retry later. If OpenAI fails, allow user to retry generation.
+- **Privacy**: NEVER hardcode API Keys. Use `UserDefaults` or `Keychain` for storage.
+
+## 5. Directory Structure (Suggested)
+- `/Models`: SwiftData models (`Item.swift` -> `WingModels.swift`)
+- `/Views`: 
+  - `/Chat`: The recording interface.
+  - `/Journal`: The reading interface.
+  - `/Settings`: API Key & WebDAV config.
+- `/Services`: 
+  - `AIService.swift` (Network calls)
+  - `ReminderManager.swift` (EventKit)
+  - `WebDAVManager.swift` (Sync)
