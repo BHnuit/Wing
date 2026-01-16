@@ -55,6 +55,7 @@ export const GeminiService = {
    * 合成日记
    * @param fragments 碎片化记录
    * @param lang 语言
+   * @param apiKey API密钥（从设置中获取）
    * @param retries 重试次数
    * @returns 合成的日记数据
    * @throws GeminiAPIError
@@ -62,10 +63,12 @@ export const GeminiService = {
   async synthesizeJournal(
     fragments: RawFragment[], 
     lang: Language = 'zh',
+    apiKey?: string,
     retries: number = 2
   ): Promise<Partial<WingEntry>> {
-    const apiKey = process.env.API_KEY;
-    if (!apiKey) {
+    // 优先使用传入的 apiKey，否则尝试从环境变量读取（用于开发环境）
+    const key = apiKey || process.env.API_KEY || process.env.GEMINI_API_KEY;
+    if (!key) {
       throw new GeminiAPIError('API Key is missing. Please configure it in settings.', 'MISSING_API_KEY');
     }
 
@@ -77,7 +80,7 @@ export const GeminiService = {
 
     for (let attempt = 0; attempt <= retries; attempt++) {
       try {
-        const ai = new GoogleGenAI({ apiKey });
+        const ai = new GoogleGenAI({ apiKey: key });
         
         const inputContext = fragments
           .sort((a, b) => a.timestamp - b.timestamp)

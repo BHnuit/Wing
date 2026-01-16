@@ -113,7 +113,14 @@ const ChatView: React.FC = () => {
     
     setIsSynthesizing(true);
     try {
-      const synthesizedData = await GeminiService.synthesizeJournal(session.fragments, settings.language);
+      // 从设置中获取 API Key
+      if (!settings.apiKey) {
+        showToast(t('api_key_missing'), 'error');
+        setIsSynthesizing(false);
+        return;
+      }
+      
+      const synthesizedData = await GeminiService.synthesizeJournal(session.fragments, settings.language, settings.apiKey);
       
       // 构建图片映射：从fragments中提取所有图片
       const images: { [key: string]: string } = {};

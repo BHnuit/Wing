@@ -272,8 +272,19 @@ export class WebDAVService {
 
   /**
    * 获取完整的文件路径
+   * 在开发环境中使用 Vite 代理，生产环境直接访问
    */
   private getFullPath(fileName: string): string {
+    // 检查是否是开发环境（通过检查是否在 localhost 或使用代理）
+    const isDev = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+    
+    // 如果是坚果云且是开发环境，使用代理
+    if (isDev && this.config.url.includes('jianguoyun.com')) {
+      const path = `Wing/${fileName}`;
+      return `/api/webdav/${path}`;
+    }
+    
+    // 生产环境或其他 WebDAV 服务器，直接访问
     const baseUrl = this.config.url.endsWith('/') 
       ? this.config.url 
       : `${this.config.url}/`;
