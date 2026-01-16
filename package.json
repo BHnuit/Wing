@@ -1,19 +1,26 @@
 {
   "name": "wing---ethereal-ai-journal",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.0",
+  "description": "A privacy-focused, feather-light AI journal web application",
+  "author": "Wing Team",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "ios:setup": "bash setup-ios.sh",
+    "ios:open": "npx cap open ios",
+    "ios:sync": "npx cap sync ios"
   },
   "dependencies": {
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
     "@google/genai": "^1.37.0",
     "react-router-dom": "^7.12.0",
-    "lucide-react": "^0.562.0"
+    "lucide-react": "^0.562.0",
+    "react-markdown": "^9.0.1",
+    "remark-gfm": "^4.0.0"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",

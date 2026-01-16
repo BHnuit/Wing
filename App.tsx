@@ -6,6 +6,7 @@ import ChatView from './components/ChatView';
 import JournalView from './components/JournalView';
 import JournalDetail from './components/JournalDetail';
 import SettingsView from './components/SettingsView';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { MockDataService } from './services/mockDataService';
 import { useTranslation } from './i18n';
 
@@ -72,16 +73,18 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 
 const App: React.FC = () => {
   return (
-    <HashRouter>
-      <Layout>
-        <Routes>
-          <Route path="/" element={<ChatView />} />
-          <Route path="/journal" element={<JournalView />} />
-          <Route path="/journal/:id" element={<JournalDetail />} />
-          <Route path="/settings" element={<SettingsView />} />
-        </Routes>
-      </Layout>
-    </HashRouter>
+    <ErrorBoundary>
+      <HashRouter>
+        <Layout>
+          <Routes>
+            <Route path="/" element={<ChatView />} />
+            <Route path="/journal" element={<JournalView />} />
+            <Route path="/journal/:id" element={<JournalDetail />} />
+            <Route path="/settings" element={<SettingsView />} />
+          </Routes>
+        </Layout>
+      </HashRouter>
+    </ErrorBoundary>
   );
 };
 

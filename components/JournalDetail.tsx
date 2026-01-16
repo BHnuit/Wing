@@ -4,6 +4,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Share, MoreHorizontal, Bell, CheckCircle } from 'lucide-react';
 import { MockDataService } from '../services/mockDataService';
 import { useTranslation } from '../i18n';
+import { MarkdownRenderer } from './MarkdownRenderer';
 
 const JournalDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -18,7 +19,21 @@ const JournalDetail: React.FC = () => {
     return () => window.removeEventListener('wing_settings_updated', handleSettingsUpdate);
   }, []);
 
-  if (!entry) return <div className="p-20 text-center">Entry not found.</div>;
+  if (!entry) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+        <div className="text-center">
+          <p className="text-slate-600 text-lg mb-4">{t('entry_not_found')}</p>
+          <button
+            onClick={() => navigate('/journal')}
+            className="text-blue-600 hover:text-blue-700 underline"
+          >
+            {t('go_home')}
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="bg-white min-h-screen">
@@ -45,13 +60,7 @@ const JournalDetail: React.FC = () => {
       </div>
 
       <div className="px-8 pb-12">
-        <div className="prose prose-slate max-w-none">
-          {entry.markdownContent.split('\n').map((para, i) => (
-            <p key={i} className="text-slate-700 leading-relaxed text-lg mb-6 last:mb-0">
-              {para}
-            </p>
-          ))}
-        </div>
+        <MarkdownRenderer content={entry.markdownContent} entry={entry} />
       </div>
 
       <div className="px-6 mb-12">

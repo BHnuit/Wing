@@ -1,5 +1,21 @@
 {
   "name": "Wing - Ethereal AI Journal",
-  "description": "A minimalist, privacy-focused diary app that silently collects your daily thoughts and uses AI to weave them into a structured, insightful journal entry at the end of the day.",
-  "requestFramePermissions": []
+  "description": "A minimalist, privacy-focused web-based diary app built with React and TypeScript. Silently collects your daily thoughts and images, then uses Google Gemini AI to weave them into structured, insightful journal entries. Features WebDAV sync (Jianguoyun), data import/export, and local-first architecture.",
+  "requestFramePermissions": [],
+  "techStack": [
+    "React 19",
+    "TypeScript",
+    "Vite",
+    "Tailwind CSS",
+    "Google Gemini API",
+    "WebDAV"
+  ],
+  "features": [
+    "Fragment recording (text + images)",
+    "AI-powered journal synthesis",
+    "WebDAV cloud sync",
+    "Data import/export",
+    "Multi-language support (zh/en)",
+    "Local-first architecture"
+  ]
 }

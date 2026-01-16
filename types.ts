@@ -34,6 +34,7 @@ export interface WingEntry {
   aiInsights: string;
   todos: WingTodo[];
   createdAt: number;
+  images?: { [key: string]: string }; // 图片映射：fragmentId -> base64 imageData
 }
 
 export interface DailySession {

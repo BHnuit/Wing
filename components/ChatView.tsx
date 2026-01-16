@@ -2,10 +2,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Send, CheckCircle2, Image as ImageIcon, Stars, Loader2 } from 'lucide-react';
 import { MockDataService } from '../services/mockDataService';
-import { GeminiService } from '../services/geminiService';
-import { DailySession, RawFragment, SessionStatus, WingEntry } from '../types';
+import { GeminiService, GeminiAPIError } from '../services/geminiService';
+import { DailySession, RawFragment, SessionStatus, WingEntry, FragmentType } from '../types';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from '../i18n';
+import { useToast } from './ErrorToast';
 
 const ChatView: React.FC = () => {
   const [session, setSession] = useState<DailySession>(MockDataService.getCurrentSession());
@@ -14,8 +15,10 @@ const ChatView: React.FC = () => {
   const [input, setInput] = useState('');
   const [showSuccess, setShowSuccess] = useState(false);
   const [isSynthesizing, setIsSynthesizing] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
+  const { showToast, ToastContainer } = useToast();
 
   useEffect(() => {
     const handleSettingsUpdate = () => setSettings(MockDataService.getSettings());
@@ -26,6 +29,68 @@ const ChatView: React.FC = () => {
   useEffect(() => {
     scrollRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [session.fragments]);
+
+  /**
+   * 将图片文件转换为base64
+   */
+  const convertImageToBase64 = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = reader.result as string;
+        resolve(result);
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  };
+
+  /**
+   * 处理图片选择
+   */
+  const handleImageSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    // 检查文件类型
+    if (!file.type.startsWith('image/')) {
+      showToast(t('invalid_image'), 'error');
+      return;
+    }
+
+    // 检查文件大小（限制为5MB）
+    if (file.size > 5 * 1024 * 1024) {
+      showToast(t('image_too_large'), 'error');
+      return;
+    }
+
+    try {
+      const base64 = await convertImageToBase64(file);
+      
+      // 自动添加图片片段
+      const fragment = MockDataService.addFragment(
+        session.id, 
+        file.name || t('image_placeholder'),
+        FragmentType.IMAGE,
+        base64
+      );
+      
+      if (fragment) {
+        setSession({ ...MockDataService.getCurrentSession() });
+        setShowSuccess(true);
+        if ('vibrate' in navigator) navigator.vibrate(50);
+        setTimeout(() => setShowSuccess(false), 1500);
+      }
+    } catch (error) {
+      console.error('Failed to process image:', error);
+      showToast(t('image_process_failed'), 'error');
+    }
+
+    // 重置文件输入
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
 
   const handleSend = () => {
     if (!input.trim()) return;
@@ -41,12 +106,23 @@ const ChatView: React.FC = () => {
   };
 
   const handleSynthesize = async () => {
-    if (session.fragments.length === 0) return;
+    if (session.fragments.length === 0) {
+      showToast(t('no_fragments'), 'warning');
+      return;
+    }
     
     setIsSynthesizing(true);
     try {
       const synthesizedData = await GeminiService.synthesizeJournal(session.fragments, settings.language);
       
+      // 构建图片映射：从fragments中提取所有图片
+      const images: { [key: string]: string } = {};
+      session.fragments.forEach(fragment => {
+        if (fragment.type === FragmentType.IMAGE && fragment.imageData) {
+          images[fragment.id] = fragment.imageData;
+        }
+      });
+
       const newEntry: WingEntry = {
         id: crypto.randomUUID(),
         title: synthesizedData.title || t('untitled'),
@@ -55,7 +131,8 @@ const ChatView: React.FC = () => {
         markdownContent: synthesizedData.markdownContent || '',
         aiInsights: synthesizedData.aiInsights || '',
         todos: synthesizedData.todos || [],
-        createdAt: Date.now()
+        createdAt: Date.now(),
+        images: Object.keys(images).length > 0 ? images : undefined
       };
 
       MockDataService.saveEntry(newEntry);
@@ -63,10 +140,35 @@ const ChatView: React.FC = () => {
       const updatedSession = { ...session, status: SessionStatus.COMPLETED, finalEntryId: newEntry.id };
       MockDataService.saveSession(updatedSession);
       
-      navigate(`/journal/${newEntry.id}`);
+      showToast(t('synth_success'), 'success', 2000);
+      setTimeout(() => {
+        navigate(`/journal/${newEntry.id}`);
+      }, 500);
     } catch (error) {
       console.error("Synthesis failed:", error);
-      alert(t('synth_failed'));
+      
+      let errorMessage = t('synth_failed');
+      
+      if (error instanceof GeminiAPIError) {
+        switch (error.code) {
+          case 'MISSING_API_KEY':
+            errorMessage = t('api_key_missing');
+            break;
+          case 'NETWORK_ERROR':
+            errorMessage = t('network_error');
+            break;
+          case 'EMPTY_FRAGMENTS':
+            errorMessage = t('no_fragments');
+            break;
+          case 'PARSE_ERROR':
+            errorMessage = t('parse_error');
+            break;
+          default:
+            errorMessage = error.message || t('synth_failed');
+        }
+      }
+      
+      showToast(errorMessage, 'error');
     } finally {
       setIsSynthesizing(false);
     }
@@ -85,8 +187,26 @@ const ChatView: React.FC = () => {
         ) : (
           session.fragments.map((fragment) => (
             <div key={fragment.id} className="flex flex-col items-end">
-              <div className="max-w-[85%] bg-white border border-slate-100 px-4 py-3 rounded-2xl rounded-tr-none shadow-sm">
-                <p className="text-slate-800 leading-relaxed">{fragment.content}</p>
+              <div className="max-w-[85%] bg-white border border-slate-100 rounded-2xl rounded-tr-none shadow-sm overflow-hidden">
+                {fragment.type === FragmentType.IMAGE && fragment.imageData ? (
+                  <div className="relative">
+                    <img 
+                      src={fragment.imageData} 
+                      alt={fragment.content}
+                      className="max-w-full h-auto object-cover"
+                      style={{ maxHeight: '400px' }}
+                    />
+                    {fragment.content && fragment.content !== t('image_placeholder') && (
+                      <div className="px-4 py-2 bg-slate-50 border-t border-slate-100">
+                        <p className="text-xs text-slate-500">{fragment.content}</p>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="px-4 py-3">
+                    <p className="text-slate-800 leading-relaxed">{fragment.content}</p>
+                  </div>
+                )}
               </div>
               <span className="text-[10px] text-slate-400 mt-1 mr-1">
                 {new Date(fragment.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
@@ -116,7 +236,18 @@ const ChatView: React.FC = () => {
 
       <div className="sticky bottom-0 bg-white/80 backdrop-blur-xl border-t border-slate-200 px-6 py-4">
         <div className="flex items-end gap-3">
-          <button className="p-3 text-slate-400 hover:text-blue-500 transition-colors">
+          <input
+            type="file"
+            ref={fileInputRef}
+            onChange={handleImageSelect}
+            accept="image/*"
+            className="hidden"
+          />
+          <button 
+            onClick={() => fileInputRef.current?.click()}
+            className="p-3 text-slate-400 hover:text-blue-500 transition-colors"
+            title={t('add_image')}
+          >
             <ImageIcon size={22} />
           </button>
           
@@ -148,6 +279,9 @@ const ChatView: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {/* Toast 容器 */}
+      <ToastContainer />
     </div>
   );
 };
