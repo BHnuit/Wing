@@ -1,0 +1,13 @@
+# 忽略不需要部署的文件
+node_modules/
+.git/
+.env.local
+.env.*.local
+*.log
+.DS_Store
+dist/
+.vscode/
+.idea/
+capacitor.config.ts
+setup-ios.sh
+setup-ios.md

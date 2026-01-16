@@ -1,0 +1,30 @@
+[build]
+  # 构建命令
+  command = "npm run build"
+  # 构建输出目录（Vite 默认输出到 dist）
+  publish = "dist"
+  # Node.js 版本
+  node_version = "18"
+
+[build.environment]
+  # 设置 Node.js 版本
+  NODE_VERSION = "18"
+
+# 单页应用路由重写规则（因为使用了 HashRouter，这个可能不需要，但保留以防万一）
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+# WebDAV 代理（如果需要的话，可以使用 Netlify Functions）
+# 注意：Netlify 的免费版不支持服务器端代理，WebDAV 功能可能需要客户端直接访问
+# 或者使用 Netlify Edge Functions（需要付费计划）
+
+# 安全头设置
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options = "DENY"
+    X-XSS-Protection = "1; mode=block"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"

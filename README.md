@@ -73,6 +73,62 @@ npm run build
 npm run preview
 ```
 
+## 🌐 部署到 Netlify
+
+Wing 支持一键部署到 Netlify，提供免费的静态网站托管服务。
+
+### 部署方式
+
+#### 方法 1：通过 GitHub 自动部署（推荐）
+
+1. **登录 Netlify**
+   - 访问 [Netlify](https://www.netlify.com/)
+   - 使用 GitHub 账号登录
+
+2. **导入项目**
+   - 点击 "Add new site" → "Import an existing project"
+   - 选择 GitHub，授权并选择 `BHnuit/Wing` 仓库
+
+3. **配置构建设置**
+   - Build command: `npm run build`
+   - Publish directory: `dist`
+   - 这些设置通常会自动检测，项目已包含 `netlify.toml` 配置文件
+
+4. **配置环境变量（可选）**
+   - 进入 "Site settings" → "Environment variables"
+   - 添加 `GEMINI_API_KEY`（可选，用户也可以在应用内设置页面配置）
+
+5. **部署**
+   - 点击 "Deploy site"，Netlify 会自动构建并部署
+   - 部署完成后会获得一个免费的 `.netlify.app` 域名
+
+#### 方法 2：手动部署
+
+1. **本地构建**
+   ```bash
+   npm run build
+   ```
+
+2. **上传到 Netlify**
+   - 登录 Netlify
+   - 将 `dist` 文件夹拖拽到部署区域
+
+### 部署注意事项
+
+- ✅ **路由支持**：项目使用 HashRouter，Netlify 无需额外配置
+- ✅ **环境变量**：可在 Netlify 中配置 `GEMINI_API_KEY`，但用户也可以在应用内设置
+- ⚠️ **WebDAV 功能**：开发环境的 WebDAV 代理在 Netlify 上无法使用。生产环境需要：
+  - 使用支持 CORS 的 WebDAV 服务器，或
+  - 使用 Netlify Functions（需要付费计划），或
+  - 客户端直接访问（如果服务器支持 CORS）
+
+### 配置文件说明
+
+项目已包含以下 Netlify 配置文件：
+
+- `netlify.toml` - Netlify 部署配置（构建命令、路由规则、安全头等）
+- `.netlifyignore` - 忽略不需要部署的文件（如 `node_modules`、`.env` 等）
+
 ## 📁 项目结构
 
 ```
