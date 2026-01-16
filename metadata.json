@@ -1,0 +1,5 @@
+{
+  "name": "Wing - Ethereal AI Journal",
+  "description": "A minimalist, privacy-focused diary app that silently collects your daily thoughts and uses AI to weave them into a structured, insightful journal entry at the end of the day.",
+  "requestFramePermissions": []
+}
