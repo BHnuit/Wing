@@ -5,32 +5,80 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Wing - AI Journal</title>
+    <link rel="icon" type="image/svg+xml" href="/OwlLogo.svg" />
     <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        darkMode: 'class',
+        theme: {
+          extend: {
+            colors: {
+              /** 亮色模式：米白/道林纸质感，深咖啡主文字，蜂蜜金强调，浅卡其分割 */
+              twilight: {
+                bg: '#FAF9F4',
+                cream: '#F2EFE5',
+                surface: '#FFF8E7',
+                divider: '#E6DDCF',
+                charcoal: '#4A3B32',
+                warm: '#4A3B32',
+                dusk: '#4A3B32',
+                duskLight: '#8C7B70',
+                amber: '#D9A54C',
+                amberMuted: '#B07D48',
+              },
+              /** 暗色模式：忧郁、深沉、宁静，适合深夜独白 */
+              nocturnal: {
+                bg: '#1A1B26',
+                surface: '#24283B',
+                primary: '#A9B1D6',
+                secondary: '#787C99',
+                accent: '#7AA2F7',
+                accentPurple: '#BB9AF7',
+              }
+            }
+          }
+        }
+      }
+    </script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Playfair+Display:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet">
     <style>
         body {
             font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-            background-color: #f8fafc;
+            background: #FAF9F4;
+            color: #4A3B32;
+        }
+        html.dark body {
+            background: #1A1B26;
+            color: #A9B1D6;
         }
         .serif {
             font-family: 'Playfair Display', Georgia, serif;
         }
         .glass {
-            background: rgba(255, 255, 255, 0.7);
+            background: rgba(242, 239, 229, 0.92);
             backdrop-filter: blur(12px);
             -webkit-backdrop-filter: blur(12px);
-            border: 1px solid rgba(255, 255, 255, 0.3);
+            border: 1px solid #E6DDCF;
         }
-        /* Custom scrollbar for minimalist look */
-        ::-webkit-scrollbar {
-            width: 4px;
+        html.dark .glass {
+            background: rgba(36, 40, 59, 0.92);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border-color: rgba(120, 124, 153, 0.25);
         }
-        ::-webkit-scrollbar-track {
-            background: transparent;
-        }
+        /* 亮色：浅卡其分割线色；暗色：沿用 nocturn 灰 */
+        ::-webkit-scrollbar { width: 4px; }
+        ::-webkit-scrollbar-track { background: transparent; }
         ::-webkit-scrollbar-thumb {
-            background: rgba(0,0,0,0.1);
+            background: #E6DDCF;
             border-radius: 10px;
+        }
+        ::-webkit-scrollbar-thumb:hover { background: #D9D0C2; }
+        html.dark ::-webkit-scrollbar-thumb {
+            background: rgba(120, 124, 153, 0.35);
+        }
+        html.dark ::-webkit-scrollbar-thumb:hover {
+            background: rgba(120, 124, 153, 0.5);
         }
     </style>
 </head>

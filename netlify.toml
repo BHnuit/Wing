@@ -10,6 +10,12 @@
   # 设置 Node.js 版本
   NODE_VERSION = "18"
 
+# AI 代理：/api/ai -> Netlify Function，须置于 /* 之前以优先生效
+[[redirects]]
+  from = "/api/ai"
+  to = "/.netlify/functions/ai"
+  status = 200
+
 # 单页应用路由重写规则（因为使用了 HashRouter，这个可能不需要，但保留以防万一）
 [[redirects]]
   from = "/*"

@@ -1,0 +1,16 @@
+# 统一换行符为 LF，便于跨平台与 GitHub 正确显示
+* text=auto eol=lf
+
+# 明确文本类型并指定工作区编码为 UTF-8，避免中文乱码
+*.md     text working-tree-encoding=UTF-8
+*.ts     text working-tree-encoding=UTF-8
+*.tsx    text working-tree-encoding=UTF-8
+*.js     text working-tree-encoding=UTF-8
+*.jsx    text working-tree-encoding=UTF-8
+*.json   text working-tree-encoding=UTF-8
+*.html   text working-tree-encoding=UTF-8
+*.css    text working-tree-encoding=UTF-8
+*.toml   text working-tree-encoding=UTF-8
+*.yaml   text working-tree-encoding=UTF-8
+*.yml    text working-tree-encoding=UTF-8
+*.sh     text working-tree-encoding=UTF-8

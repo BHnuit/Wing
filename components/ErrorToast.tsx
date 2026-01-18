@@ -77,14 +77,14 @@ const Toast: React.FC<ToastProps> = ({
 
   return (
     <div
-      className={`fixed top-4 right-4 z-50 max-w-md w-full ${config.bg} ${config.border} border rounded-2xl shadow-lg p-4 transition-all duration-300 ${
+      className={`fixed top-4 right-4 z-50 max-w-md w-full ${config.bg} ${config.border} border rounded-2xl shadow-lg p-4 transition-all duration-300 dark:bg-nocturnal-surface dark:border-nocturnal-secondary/30 ${
         isVisible ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-2'
       }`}
     >
       <div className="flex items-start gap-3">
         <Icon className={`${config.iconColor} flex-shrink-0 mt-0.5`} size={20} />
         <div className="flex-1">
-          <p className={`${config.text} text-sm font-medium leading-relaxed`}>
+          <p className={`${config.text} dark:text-nocturnal-primary text-sm font-medium leading-relaxed`}>
             {message}
           </p>
         </div>

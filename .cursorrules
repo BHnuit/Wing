@@ -11,21 +11,19 @@
 - **Type**: Web-based AI Journaling App (React + TypeScript)
 - **Core Concept**: A privacy-focused, "feather-light" AI journal web application.
 - **Workflow**: 
-  1. **Silent Recording (Daytime)**: User inputs fragmented thoughts/images locally. No AI API calls. Instant local storage (localStorage).
-  2. **AI Synthesis (End of Day)**: User triggers "Synthesize Day". App sends all fragments to Gemini API to generate a structured diary entry, mood analysis, and extracts To-Dos.
-  3. **Sync**: Diaries are backed up via WebDAV (default: Jianguoyun); Data can be imported/exported as JSON.
+  1. **Silent Recording**: User inputs fragments (text/images) locally; messages are editable. No AI on send. localStorage. Record view supports `?date=` and date picker; journal detail has "View day records".
+  2. **AI Synthesis**: User taps "收拢今日羽毛" (or "再次收拢" when day already has an entry—overwrites that entry). `aiService` supports Gemini, OpenAI, DeepSeek, custom Base; production uses `/api/ai` proxy. Output: title, mood, summary, content_markdown, insights, todos.
+  3. **Journal Detail**: Edit title/Markdown, optional edit history & restore; regenerate (merge day’s fragments, overwrite or new version); regenerate insight only; share as image, copy, copy as new, delete.
+  4. **Sync & Data**: WebDAV (Jianguoyun); optional realtime sync after key ops. Export ZIP (data.json + images/), import .json/.zip, replace.
 
 ## 2. Tech Stack & Environment
-- **Platform**: Web (Modern Browsers)
+- **Platform**: Web (Modern Browsers); Capacitor for iOS
 - **Language**: TypeScript 5.8+
-- **UI Framework**: React 19 + React Router v7
-- **Build Tool**: Vite 6
-- **Data Persistence**: **localStorage** (Browser Local Storage)
-- **Architecture**: Component-based (Functional Components with Hooks)
-- **AI Integration**: Google Gemini API (JSON Mode enforced)
-- **Styling**: Tailwind CSS (via CDN)
-- **Icons**: Lucide React
-- **Networking**: Native `fetch` API / `WebDAV` protocol
+- **UI**: React 19 + React Router v7; Tailwind (twilight / nocturnal themes); Lucide, OwlAssets
+- **Build**: Vite 6
+- **Data**: localStorage; export/import .json and .zip (data.json + images/)
+- **AI**: `aiService` unifies Gemini, OpenAI, DeepSeek, custom Base; `/api/ai` proxy in production (Vercel `api/ai.ts`, Netlify `netlify/functions/ai.ts`)
+- **Sync**: WebDAV; `triggerRealtimeSyncIfEnabled` when `realtimeWebdavSync` is on
 
 ## 3. Key Operational Rules (Business Logic)
 
@@ -38,21 +36,15 @@
 - **Goal**: Zero latency, privacy, battery saving.
 
 ### B. AI Synthesis Mode (JSON Output)
-- **Trigger**: Explicit user command "Synthesize Day" button tap.
-- **Prompting**: System Prompt must enforce **Strict JSON** output.
-- **Output Structure**:
-  - `title`: String
-  - `mood`: Emoji String
-  - `summary`: String
-  - `content_markdown`: Markdown String (keep `[Image]` placeholders)
-  - `insights`: String (Psychological analysis)
-  - `todos`: Array of objects `{ title, priority }`
-- **Image Handling**: Images are stored as base64 in `WingEntry.images` map, keyed by fragmentId.
+- **Trigger**: "收拢今日羽毛" / "再次收拢羽毛" in ChatView; or "重新生成" in JournalDetail. `aiService` routes to Gemini, OpenAI, DeepSeek, or custom.
+- **Prompting**: System prompt enforces strict JSON. `getSystemInstructionForSynthesis` in geminiService; OpenAI/DeepSeek path uses equivalent.
+- **Output**: `title`, `mood`, `summary`, `content_markdown` (keep `[Image]`), `insights`, `todos` `[{ title, priority }]`.
+- **Images**: base64 in `WingEntry.images` keyed by fragmentId; `MarkdownRenderer` receives `sessionImageFragments` or `entry.images`.
 
 ### C. Data Models (TypeScript Interfaces)
-- **`DailySession`**: Holds the date and status (`RECORDING`, `PROCESSING`, `COMPLETED`).
-- **`RawFragment`**: The individual chat bubbles (Text/Image with base64 data).
-- **`WingEntry`**: The final generated journal entry with optional `images` map.
+- **`DailySession`**: date (YYYY-MM-DD), status (`RECORDING`, `PROCESSING`, `COMPLETED`), fragments, `finalEntryId`.
+- **`RawFragment`**: id, content, imageData?, timestamp, type, `editedAt?`.
+- **`WingEntry`**: title, summary, mood, markdownContent, aiInsights, todos, images?, `editedAt?`, `editHistory?` (`EditHistoryItem[]`).
 
 ## 4. Coding Standards
 - **React**: Use functional components with hooks. Prefer `useState`, `useEffect`, `useRef`.
@@ -69,43 +61,37 @@
 ## 5. Directory Structure
 ```
 Wing/
-├── components/          # React Components
-│   ├── ChatView.tsx     # Recording interface
-│   ├── JournalView.tsx  # Journal list interface
-│   ├── JournalDetail.tsx # Journal detail view
-│   └── SettingsView.tsx # Settings (API Key & WebDAV config)
-├── services/            # Service Layer
-│   ├── geminiService.ts # Gemini API calls
-│   ├── webdavService.ts # WebDAV sync (Jianguoyun default)
-│   ├── dataService.ts   # Import/Export functionality
-│   └── mockDataService.ts # LocalStorage operations
-├── types.ts             # TypeScript type definitions
-├── i18n.ts              # Internationalization (zh/en)
-├── App.tsx              # Main app component
-├── index.tsx            # Entry point
-├── index.html           # HTML template
-└── vite.config.ts       # Vite configuration
+├── api/ai.ts, netlify/functions/ai.ts, server/aiHandler.ts  # /api/ai proxy
+├── components/
+│   ├── ChatView, JournalView, JournalDetail, MarkdownRenderer
+│   ├── OwlAssets (OwlLogo, EmptyStateOwl, LoadingOwl)
+│   ├── SettingsMainView, SettingsAiView, SettingsLanguageView, SettingsStorageView
+│   └── ErrorBoundary, ErrorToast
+├── services/
+│   ├── aiService (Gemini/OpenAI/DeepSeek/custom, testConnection, proxy)
+│   ├── geminiService, webdavService, dataService, mockDataService, welcomeEntry
+├── utils/date (getLocalDateString)
+├── types.ts, i18n.ts, App.tsx, index.tsx, index.html, vite.config.ts
 ```
 
 ## 6. Key Features Implemented
-- ✅ Fragment recording (text + images)
-- ✅ AI synthesis with Gemini API
-- ✅ Image upload and display
-- ✅ WebDAV sync (Jianguoyun support)
-- ✅ Data import/export (JSON)
-- ✅ Multi-language support (zh/en)
-- ✅ Local-first architecture
+- ✅ Fragment recording (text + images), message edit, `editedAt`; record view by date + `?date=` + picker
+- ✅ Journal detail: "View day records"; edit title/Markdown, edit history, restore; regenerate (overwrite/new), regenerate insight; share image, copy, copy as new, delete
+- ✅ AI: Gemini, OpenAI, DeepSeek, custom Base; test connection; `/api/ai` in prod
+- ✅ Export ZIP (data.json + images/), import .json/.zip, replace; WebDAV, realtime sync option
+- ✅ Theme (system/light/dark), twilight/nocturnal UI, OwlAssets, i18n (zh/en), model output language
+- ✅ Settings: main (heatmap, today wings, total feathers), AI, language/theme, storage (keepEditHistory, realtimeWebdavSync, backupApiKeys, WebDAV, import/export)
+- ✅ `getSessionByDate`, `getOrCreateSessionByDate`, `updateFragment`, `updateEntry`, `deleteEntry`; welcome entry on first empty
 
 ## 7. Development Notes
-- **Environment Variables**: Use `.env.local` for `GEMINI_API_KEY`
-- **Build Output**: `dist/` directory
-- **Development Server**: `npm run dev` (port 3000)
-- **Browser Compatibility**: Modern browsers with ES2022 support
-- **Storage Limit**: localStorage has ~5-10MB limit, consider IndexedDB for large datasets
+- **Env**: `.env.local` for `GEMINI_API_KEY` (optional); `VITE_AI_PROXY`, `VITE_AI_PROXY_URL` for dev proxy
+- **Build**: `dist/`; `npm run dev` (port 3000)
+- **Storage**: localStorage ~5–10MB; consider IndexedDB for scale
 
-## 8. Future Considerations
-- Markdown rendering library for better content display
-- PWA support for offline functionality
-- IndexedDB for larger storage capacity
-- Automatic WebDAV sync after synthesis
-- Data statistics and visualization
+## 8. Future Considerations (Not Yet Done)
+- 空白引导提示 (empty-state prompts, click to fill input)
+- 待办导出 (todos as JSON/TXT/CSV or copy)
+- 文风选择 (letter/essay/report + custom in system prompt)
+- 日记导入多平台 (Day One, Journey, etc.; multi-format, mapping)
+- 定时/后台 WebDAV 同步 (beyond current realtime-on-action)
+- PWA, IndexedDB, 统计扩展 (mood trend, streak, word cloud)

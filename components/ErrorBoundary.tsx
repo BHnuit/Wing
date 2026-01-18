@@ -77,27 +77,27 @@ const ErrorFallback: React.FC<{ error: Error | null; onReset: () => void }> = ({
   const t = useTranslation(settings.language);
 
   return (
-    <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
-      <div className="max-w-md w-full bg-white rounded-3xl p-8 shadow-lg border border-slate-200">
+    <div className="min-h-screen bg-twilight-cream flex items-center justify-center p-6">
+      <div className="max-w-md w-full bg-twilight-cream rounded-3xl p-8 shadow-lg border border-twilight-divider">
         <div className="flex flex-col items-center text-center space-y-4">
           <div className="bg-rose-100 rounded-full p-4">
             <AlertTriangle className="text-rose-500" size={48} />
           </div>
           
-          <h2 className="serif text-2xl font-bold text-slate-900">
+          <h2 className="serif text-2xl font-bold text-twilight-charcoal">
             {t('error_occurred')}
           </h2>
           
-          <p className="text-slate-600 text-sm leading-relaxed">
+          <p className="text-twilight-warm text-sm leading-relaxed">
             {t('error_message')}
           </p>
 
           {error && (
             <details className="w-full mt-4 text-left">
-              <summary className="text-xs text-slate-400 cursor-pointer hover:text-slate-600 mb-2">
+              <summary className="text-xs text-twilight-duskLight cursor-pointer hover:text-twilight-dusk mb-2">
                 {t('error_details')}
               </summary>
-              <div className="bg-slate-50 rounded-xl p-4 text-xs font-mono text-slate-700 overflow-auto max-h-32">
+              <div className="bg-twilight-cream/50 rounded-xl p-4 text-xs font-mono text-twilight-charcoal overflow-auto max-h-32 border border-twilight-divider">
                 {error.message}
               </div>
             </details>
@@ -106,14 +106,14 @@ const ErrorFallback: React.FC<{ error: Error | null; onReset: () => void }> = ({
           <div className="flex gap-3 w-full mt-6">
             <button
               onClick={onReset}
-              className="flex-1 flex items-center justify-center gap-2 bg-blue-500 text-white px-4 py-3 rounded-xl font-medium hover:bg-blue-600 transition-colors"
+              className="flex-1 flex items-center justify-center gap-2 bg-twilight-amber text-twilight-charcoal px-4 py-3 rounded-xl font-medium hover:bg-twilight-amberMuted transition-colors"
             >
               <RefreshCw size={18} />
               <span>{t('retry')}</span>
             </button>
             <button
               onClick={() => window.location.href = '/'}
-              className="flex-1 flex items-center justify-center gap-2 bg-slate-100 text-slate-700 px-4 py-3 rounded-xl font-medium hover:bg-slate-200 transition-colors"
+              className="flex-1 flex items-center justify-center gap-2 bg-twilight-cream/80 text-twilight-charcoal px-4 py-3 rounded-xl font-medium hover:bg-twilight-dusk/10 transition-colors border border-twilight-divider"
             >
               <Home size={18} />
               <span>{t('go_home')}</span>

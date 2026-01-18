@@ -4,6 +4,8 @@
  */
 
 import { WingEntry, DailySession, AppSettings } from '../types';
+import { getLocalDateString } from '../utils/date';
+import { MockDataService } from './mockDataService';
 
 // 坚果云默认配置
 const JIANGUOYUN_DEFAULT_URL = 'https://dav.jianguoyun.com/dav/';
@@ -225,7 +227,7 @@ export class WebDAVService {
       };
 
       const content = JSON.stringify(backupData, null, 2);
-      const fileName = `wing-backup-${new Date().toISOString().split('T')[0]}.json`;
+      const fileName = `wing-backup-${getLocalDateString()}.json`;
 
       return await this.uploadFile(fileName, content);
     } catch (error) {
@@ -242,10 +244,10 @@ export class WebDAVService {
   async restoreData(fileName?: string): Promise<{ success: boolean; data?: any; message: string }> {
     try {
       // 如果没有指定文件名，尝试下载最新的备份
-      if (!fileName) {
-        // 这里简化处理，实际应该列出文件并选择最新的
-        fileName = `wing-backup-${new Date().toISOString().split('T')[0]}.json`;
-      }
+if (!fileName) {
+            // 这里简化处理，实际应该列出文件并选择最新的
+            fileName = `wing-backup-${getLocalDateString()}.json`;
+          }
 
       const result = await this.downloadFile(fileName);
       
@@ -314,4 +316,21 @@ export const createWebDAVService = (settings: AppSettings): WebDAVService | null
     password: settings.webdavPass
   });
 };
+
+/**
+ * 若已开启「实时同步」且 WebDAV 已配置，则在后台执行一次备份；供记录、编辑等关键操作后调用
+ * @param settings 应用设置
+ */
+export async function triggerRealtimeSyncIfEnabled(settings: AppSettings): Promise<void> {
+  if (settings.realtimeWebdavSync !== true) return;
+  const svc = createWebDAVService(settings);
+  if (!svc) return;
+  try {
+    const entries = MockDataService.getEntries();
+    const sessions = MockDataService.getSessions();
+    await svc.backupData(entries, sessions);
+  } catch (e) {
+    console.warn('Realtime WebDAV sync failed:', e);
+  }
+}
 
