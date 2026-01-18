@@ -6,6 +6,7 @@
 import { WingEntry, DailySession, AppSettings } from '../types';
 import { getLocalDateString } from '../utils/date';
 import { MockDataService } from './mockDataService';
+import { buildBackupZip } from './dataService';
 
 // 坚果云默认配置
 const JIANGUOYUN_DEFAULT_URL = 'https://dav.jianguoyun.com/dav/';
@@ -174,6 +175,49 @@ export class WebDAVService {
   }
 
   /**
+   * 上传二进制文件到 WebDAV（如 ZIP）
+   * @param fileName 远程文件名
+   * @param blob 文件内容
+   * @param mimeType 如 'application/zip'，默认 application/zip
+   */
+  async uploadBlob(fileName: string, blob: Blob, mimeType: string = 'application/zip'): Promise<SyncStatus> {
+    try {
+      const dirUrl = this.getFullPath('');
+      try {
+        await fetch(dirUrl, {
+          method: 'MKCOL',
+          headers: { 'Authorization': this.getAuthHeader() }
+        });
+      } catch (e) {
+        // 目录可能已存在，忽略
+      }
+
+      const url = this.getFullPath(fileName);
+      const response = await fetch(url, {
+        method: 'PUT',
+        headers: {
+          'Authorization': this.getAuthHeader(),
+          'Content-Type': mimeType
+        },
+        body: blob
+      });
+
+      if (response.status >= 200 && response.status < 300) {
+        return { success: true, message: '上传成功', timestamp: Date.now() };
+      }
+      if (response.status === 401 || response.status === 403) {
+        return { success: false, message: '认证失败，请检查用户名和密码' };
+      }
+      return { success: false, message: `上传失败: HTTP ${response.status}` };
+    } catch (error) {
+      if (error instanceof TypeError && error.message.includes('fetch')) {
+        return { success: false, message: 'CORS错误：WebDAV服务器可能不允许跨域访问。请检查服务器配置或使用代理。' };
+      }
+      return { success: false, message: `上传错误: ${error instanceof Error ? error.message : '未知错误'}` };
+    }
+  }
+
+  /**
    * 从WebDAV下载文件
    */
   async downloadFile(fileName: string): Promise<{ success: boolean; content?: string; message: string }> {
@@ -215,21 +259,13 @@ export class WebDAVService {
   }
 
   /**
-   * 备份所有数据到WebDAV
+   * 备份所有数据到 WebDAV，ZIP 结构与本地导出一致：data.json（文本）+ images/（图片）
    */
   async backupData(entries: WingEntry[], sessions: DailySession[]): Promise<SyncStatus> {
     try {
-      const backupData = {
-        entries,
-        sessions,
-        version: '1.0.0',
-        timestamp: Date.now()
-      };
-
-      const content = JSON.stringify(backupData, null, 2);
-      const fileName = `wing-backup-${getLocalDateString()}.json`;
-
-      return await this.uploadFile(fileName, content);
+      const blob = await buildBackupZip(entries, sessions);
+      const fileName = `wing-backup-${getLocalDateString()}.zip`;
+      return await this.uploadBlob(fileName, blob, 'application/zip');
     } catch (error) {
       return {
         success: false,

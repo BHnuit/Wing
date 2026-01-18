@@ -123,43 +123,11 @@ export const GeminiService = {
           throw new GeminiAPIError('Empty response from API', 'EMPTY_RESPONSE');
         }
 
-        let result;
-        try {
-          result = JSON.parse(response.text);
-        } catch (parseError) {
-          throw new GeminiAPIError(
-            'Failed to parse API response. The response may not be valid JSON.',
-            'PARSE_ERROR'
-          );
-        }
-
-        // 验证必需字段（重新生成时若模型未返回 content_markdown 则用 previousGeneration 回退，故可放宽）
-        const requiredFields = (previousGeneration?.trim() ? ['title', 'mood', 'summary', 'todos'] : ['title', 'mood', 'summary', 'content_markdown', 'todos']) as string[];
-        const missingFields = requiredFields.filter(field => !result[field]);
-        
-        if (missingFields.length > 0) {
-          throw new GeminiAPIError(
-            `Missing required fields in response: ${missingFields.join(', ')}`,
-            'INVALID_RESPONSE'
-          );
-        }
-        
-        let rawMd = result.content_markdown ?? result.contentMarkdown;
-        let md = (rawMd != null && String(rawMd).trim() !== '') ? String(rawMd) : (previousGeneration ?? '');
-        // 若记录中有图片但模型未输出足够 [Image]，在文末补全占位符以便日记页能显示
-        const imageCount = fragments.filter((f) => (f as { type?: string }).type === 'IMAGE').length;
-        const placeholders = (md.match(/\[Image\]/gi) || []).length;
-        for (let i = placeholders; i < imageCount; i++) md += '\n\n[Image]\n\n';
-        return {
-          title: result.title,
-          mood: result.mood,
-          summary: result.summary,
-          markdownContent: md,
-          todos: result.todos
-        };
+        let result = parseSynthesisResult(response.text, previousGeneration, fragments);
+        return result;
       } catch (error) {
         lastError = error as Error;
-        
+
         // 如果是最后一次尝试，抛出错误
         if (attempt === retries) {
           break;
@@ -189,6 +157,77 @@ export const GeminiService = {
       'UNKNOWN_ERROR'
     );
   },
+
+  /**
+   * 流式合成日记：逐块返回 JSON 文本，用于代理层尽早发送首字节以降低 TTFB 超时
+   * @param fragments 碎片化记录
+   * @param lang 语言
+   * @param apiKey API 密钥
+   * @param retries 重试次数
+   * @param previousGeneration 已生成的日记正文（重新生成时）
+   * @param model 模型名
+   * @yields 原始 JSON 文本块
+   */
+  async *synthesizeJournalStream(
+    fragments: RawFragment[],
+    lang: Language = 'zh',
+    apiKey?: string,
+    retries: number = 2,
+    previousGeneration?: string,
+    model?: string
+  ): AsyncGenerator<string> {
+    const key = apiKey || process.env.API_KEY || process.env.GEMINI_API_KEY;
+    if (!key) {
+      throw new GeminiAPIError('API Key is missing. Please configure it in settings.', 'MISSING_API_KEY');
+    }
+
+    if (fragments.length === 0 && !previousGeneration?.trim()) {
+      throw new GeminiAPIError('No fragments to synthesize.', 'EMPTY_FRAGMENTS');
+    }
+
+    const inputContext = fragments
+      .sort((a, b) => a.timestamp - b.timestamp)
+      .map(f => `[${new Date(f.timestamp).toLocaleTimeString()}] ${f.type === 'IMAGE' ? '[Image]' : ''} ${f.content}`)
+      .join('\n');
+
+    let fullInput = `这是用户今天的记录：\n\n${inputContext}`;
+    if (previousGeneration?.trim()) {
+      fullInput += `\n\n[已生成的日记正文，供重新生成时参考]\n${previousGeneration}\n\n【重新生成】content_markdown 必须为**重新撰写**的正文：请对上述原文进行重写、润色或合并当日新记录，**禁止逐字照抄原文**，输出的正文须在表述、结构或详略上与原文有可见差异。todos：从当日记录或上述正文中提取待办，若无则填 []。`;
+    }
+
+    let lastError: Error | null = null;
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        const ai = new GoogleGenAI({ apiKey: key });
+        const stream = await ai.models.generateContentStream({
+          model: model || 'gemini-3-flash-preview',
+          contents: fullInput,
+          config: {
+            systemInstruction: getSystemInstructionForSynthesis(lang),
+            responseMimeType: "application/json",
+            responseSchema: WING_SYNTHESIS_SCHEMA
+          }
+        });
+
+        for await (const chunk of stream) {
+          const t = chunk?.text;
+          if (t && typeof t === 'string') yield t;
+        }
+        return;
+      } catch (error) {
+        lastError = error as Error;
+        if (attempt === retries) break;
+        await new Promise((r) => setTimeout(r, Math.pow(2, attempt) * 1000));
+      }
+    }
+
+    if (lastError instanceof GeminiAPIError) throw lastError;
+    if (lastError instanceof TypeError && (lastError.message || '').includes('fetch')) {
+      throw new GeminiAPIError('Network error. Please check your internet connection.', 'NETWORK_ERROR');
+    }
+    throw new GeminiAPIError(lastError?.message || 'Stream synthesis failed', 'UNKNOWN_ERROR');
+  }
+,
 
   /**
    * 仅根据日记内容重新生成心理洞察（约 50–100 字）
@@ -244,3 +283,40 @@ export const GeminiService = {
     throw new GeminiAPIError(lastError?.message || 'Insight generation failed', 'UNKNOWN_ERROR');
   }
 };
+
+/** 解析合成结果 JSON 并做 [Image] 占位补全，返回 WingEntry 部分字段；供 geminiService 与 aiHandler 流式解析共用 */
+export function parseSynthesisResult(
+  rawText: string,
+  previousGeneration: string | undefined,
+  fragments: RawFragment[]
+): Partial<WingEntry> {
+  let result: Record<string, unknown>;
+  try {
+    result = JSON.parse(rawText);
+  } catch {
+    throw new GeminiAPIError(
+      'Failed to parse API response. The response may not be valid JSON.',
+      'PARSE_ERROR'
+    );
+  }
+  const requiredFields = (previousGeneration?.trim() ? ['title', 'mood', 'summary', 'todos'] : ['title', 'mood', 'summary', 'content_markdown', 'todos']) as string[];
+  const missingFields = requiredFields.filter(field => !result[field]);
+  if (missingFields.length > 0) {
+    throw new GeminiAPIError(
+      `Missing required fields in response: ${missingFields.join(', ')}`,
+      'INVALID_RESPONSE'
+    );
+  }
+  let rawMd = result.content_markdown ?? result.contentMarkdown;
+  let md = (rawMd != null && String(rawMd).trim() !== '') ? String(rawMd) : (previousGeneration ?? '');
+  const imageCount = fragments.filter((f) => (f as { type?: string }).type === 'IMAGE').length;
+  const placeholders = (md.match(/\[Image\]/gi) || []).length;
+  for (let i = placeholders; i < imageCount; i++) md += '\n\n[Image]\n\n';
+  return {
+    title: result.title,
+    mood: result.mood,
+    summary: result.summary,
+    markdownContent: md,
+    todos: result.todos
+  };
+}

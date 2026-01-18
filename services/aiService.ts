@@ -21,9 +21,15 @@ export class AiAPIError extends Error {
 const OPENAI_BASE = 'https://api.openai.com';
 const DEEPSEEK_BASE = 'https://api.deepseek.com';
 
-/** 生产环境或显式开启时走 /api/ai 代理，避免浏览器直连 AI 供应商的 CORS 限制（Vercel/Netlify 等） */
-const USE_AI_PROXY = import.meta.env.PROD || import.meta.env.VITE_AI_PROXY === 'true';
-const AI_PROXY_URL = ((import.meta.env.VITE_AI_PROXY_URL as string) || '/api/ai').replace(/\/$/, '');
+/**
+ * 生产环境或显式开启时走 /api/ai 代理，避免浏览器直连 AI 供应商的 CORS 限制（Vercel/Netlify 等）。
+ * 仅浏览器端使用代理：服务端（如 Vercel serverless）无 window，且 fetch('/api/ai') 相对路径在部署环境中无法解析，会报错；
+ * 服务端应直接请求各 AI 供应商，无 CORS 问题。
+ */
+const USE_AI_PROXY =
+  typeof window !== 'undefined' &&
+  (import.meta.env?.PROD === true || import.meta.env?.VITE_AI_PROXY === 'true');
+const AI_PROXY_URL = (String(import.meta.env?.VITE_AI_PROXY_URL || '') || '/api/ai').replace(/\/$/, '');
 
 /**
  * 解析模型返回内容的语言：modelLanguage 为 'same' 或未设时使用页面语言
@@ -169,6 +175,118 @@ async function openAICompatibleSynthesize(
 }
 
 /**
+ * 使用 OpenAI 兼容接口流式合成日记（stream: true），逐块 yield 文本以降低 TTFB
+ * 注：流式时部分实现可能不支持 response_format.json_object，仍依赖 system 约束输出 JSON
+ */
+async function* openAICompatibleSynthesizeStream(
+  fragments: RawFragment[],
+  lang: Language,
+  settings: AppSettings,
+  retries: number,
+  previousGeneration?: string
+): AsyncGenerator<string> {
+  const base = getBaseUrl(settings);
+  const model = getModel(settings);
+  if (!model) throw new AiAPIError('请填写模型名称', 'MISSING_MODEL');
+
+  const url = `${base}/v1/chat/completions`;
+  const sys = getSystemInstructionForSynthesis(lang) +
+    '\n\nOutput ONLY a valid JSON object. No markdown, no extra text. Required keys: title, mood, summary, content_markdown, todos (array of {title, priority}). priority is one of: high, medium, low.';
+
+  const inputContext = fragments
+    .sort((a, b) => a.timestamp - b.timestamp)
+    .map((f) => `[${new Date(f.timestamp).toLocaleTimeString()}] ${f.type === FragmentType.IMAGE ? '[Image]' : ''} ${f.content}`)
+    .join('\n');
+
+  let fullInput = `这是用户今天的记录：\n\n${inputContext}`;
+  if (previousGeneration?.trim()) {
+    fullInput += `\n\n[已生成的日记正文，供重新生成时参考]\n${previousGeneration}\n\n【重新生成】content_markdown 必须为**重新撰写**的正文：请对上述原文进行重写、润色或合并当日新记录，**禁止逐字照抄原文**，输出的正文须在表述、结构或详略上与原文有可见差异。todos：从当日记录或上述正文中提取待办，若无则填 []。`;
+  }
+
+  const body = {
+    model,
+    messages: [
+      { role: 'system' as const, content: sys },
+      { role: 'user' as const, content: fullInput }
+    ],
+    stream: true,
+    response_format: { type: 'json_object' as const }
+  };
+
+  let lastErr: Error | null = null;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${getEffectiveApiKey(settings)}`
+        },
+        body: JSON.stringify(body)
+      });
+
+      if (!res.ok) {
+        const json = await res.json().catch(() => ({}));
+        const msg = (json?.error?.message || json?.message || res.statusText) || `HTTP ${res.status}`;
+        throw new AiAPIError(msg, json?.error?.code || 'API_ERROR', res.status);
+      }
+
+      const reader = res.body?.getReader();
+      if (!reader) throw new AiAPIError('接口未返回可读流', 'EMPTY_RESPONSE');
+
+      const dec = new TextDecoder();
+      let buf = '';
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        const blocks = buf.split('\n\n');
+        buf = blocks.pop() ?? '';
+        for (const block of blocks) {
+          const line = block.split('\n').find((l) => l.startsWith('data: '));
+          if (!line) continue;
+          const d = line.slice(6).trim();
+          if (d === '[DONE]') return;
+          try {
+            const j = JSON.parse(d) as { choices?: Array<{ delta?: { content?: string } }> };
+            const c = j?.choices?.[0]?.delta?.content;
+            if (typeof c === 'string') yield c;
+          } catch {
+            // 忽略非 JSON 或无效行
+          }
+        }
+      }
+      // 处理剩余
+      if (buf) {
+        const line = buf.split('\n').find((l) => l.startsWith('data: '));
+        if (line) {
+          const d = line.slice(6).trim();
+          if (d !== '[DONE]') {
+            try {
+              const j = JSON.parse(d) as { choices?: Array<{ delta?: { content?: string } }> };
+              const c = j?.choices?.[0]?.delta?.content;
+              if (typeof c === 'string') yield c;
+            } catch {
+              // ignore
+            }
+          }
+        }
+      }
+      return;
+    } catch (e) {
+      lastErr = e as Error;
+      if (e instanceof AiAPIError) throw e;
+      if (attempt === retries) break;
+      await new Promise((r) => setTimeout(r, Math.pow(2, attempt) * 1000));
+    }
+  }
+  if (lastErr instanceof TypeError && (lastErr.message || '').includes('fetch')) {
+    throw new AiAPIError('网络异常，请检查网络', 'NETWORK_ERROR');
+  }
+  throw new AiAPIError(lastErr?.message || '流式合成失败', 'UNKNOWN_ERROR');
+}
+
+/**
  * 使用 OpenAI 兼容接口仅生成心理洞察
  */
 async function openAICompatibleRegenerateInsight(
@@ -217,25 +335,74 @@ async function openAICompatibleRegenerateInsight(
 
 export const AiService = {
   /**
+   * 流式合成日记（仅服务端）：逐块 yield JSON 文本，供代理做 SSE 转发以降低 TTFB
+   * @param fragments 碎片
+   * @param lang 语言
+   * @param settings 应用设置
+   * @param retries 重试次数
+   * @param previousGeneration 重新生成时的已有正文
+   */
+  async *synthesizeJournalStream(
+    fragments: RawFragment[],
+    lang: Language,
+    settings: AppSettings,
+    retries: number = 2,
+    previousGeneration?: string
+  ): AsyncGenerator<string> {
+    if (!getEffectiveApiKey(settings)) {
+      throw new AiAPIError('请先在设置中配置 API 密钥', 'MISSING_API_KEY');
+    }
+    const provider = (settings.aiProvider || 'gemini') as AiProvider;
+
+    if (provider === 'gemini') {
+      try {
+        yield* GeminiService.synthesizeJournalStream(
+          fragments,
+          lang,
+          getEffectiveApiKey(settings),
+          retries,
+          previousGeneration,
+          getModel(settings)
+        );
+      } catch (e) {
+        if (e instanceof GeminiAPIError) throw new AiAPIError(e.message, e.code, e.statusCode);
+        throw e;
+      }
+      return;
+    }
+
+    if (provider === 'custom') {
+      const base = (settings.aiBaseUrl || '').trim();
+      if (!base) throw new AiAPIError('请填写自定义 Base URL', 'MISSING_BASE_URL');
+      if (!getModel(settings)) throw new AiAPIError('请填写模型名称', 'MISSING_MODEL');
+    }
+    yield* openAICompatibleSynthesizeStream(fragments, lang, settings, retries, previousGeneration);
+  },
+
+  /**
    * 合成日记：按设置路由到 Gemini 或 OpenAI 兼容接口
+   * 走代理且 stream 为 true 时使用 SSE，以降低首次字节响应超时
    * @param fragments 碎片
    * @param lang 语言
    * @param settings 应用设置（含 aiProvider、apiKey、aiBaseUrl、aiModels）
    * @param retries 重试次数
    * @param previousGeneration 重新生成时的已有正文
+   * @param opts 可选，stream: 走代理时是否请求流式（默认 true）
    */
   async synthesizeJournal(
     fragments: RawFragment[],
     lang: Language,
     settings: AppSettings,
     retries: number = 2,
-    previousGeneration?: string
+    previousGeneration?: string,
+    opts?: { stream?: boolean }
   ): Promise<Partial<WingEntry>> {
     if (!getEffectiveApiKey(settings)) {
       throw new AiAPIError('请先在设置中配置 API 密钥', 'MISSING_API_KEY');
     }
 
     const provider = (settings.aiProvider || 'gemini') as AiProvider;
+    const useStream = opts?.stream !== false;
 
     if (USE_AI_PROXY) {
       const res = await fetch(AI_PROXY_URL, {
@@ -243,6 +410,7 @@ export const AiService = {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           action: 'synthesize',
+          stream: useStream,
           provider,
           apiKey: getEffectiveApiKey(settings),
           baseUrl: provider === 'custom' ? (settings.aiBaseUrl || '').trim() : undefined,
@@ -252,6 +420,51 @@ export const AiService = {
           previousGeneration
         })
       });
+
+      const ct = (res.headers.get('Content-Type') || '').toLowerCase();
+      if (useStream && ct.includes('text/event-stream')) {
+        const dec = new TextDecoder();
+        const reader = res.body?.getReader();
+        if (!reader) {
+          const j = (await res.json().catch(() => ({}))) as { error?: string; code?: string };
+          if (!res.ok) throw new AiAPIError(j.error || '请求失败', j.code, res.status);
+          return j as Partial<WingEntry>;
+        }
+        let buf = '';
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buf += dec.decode(value, { stream: true });
+          const blocks = buf.split('\n\n');
+          buf = blocks.pop() ?? '';
+          for (const block of blocks) {
+            const line = block.split('\n').find((l) => l.startsWith('data: '));
+            if (!line) continue;
+            try {
+              const j = JSON.parse(line.slice(6).trim()) as { done?: boolean; entry?: Partial<WingEntry>; error?: string; code?: string };
+              if (j.done === true && j.entry) return j.entry;
+              if (j.error) throw new AiAPIError(j.error, j.code, res.status);
+            } catch (e) {
+              if (e instanceof AiAPIError) throw e;
+              // 忽略解析失败行
+            }
+          }
+        }
+        if (buf) {
+          try {
+            const line = buf.split('\n').find((l) => l.startsWith('data: '));
+            if (line) {
+              const j = JSON.parse(line.slice(6).trim()) as { done?: boolean; entry?: Partial<WingEntry>; error?: string; code?: string };
+              if (j.done === true && j.entry) return j.entry;
+              if (j.error) throw new AiAPIError(j.error, j.code, res.status);
+            }
+          } catch (e) {
+            if (e instanceof AiAPIError) throw e;
+          }
+        }
+        throw new AiAPIError('流式响应未返回完整 entry', 'EMPTY_RESPONSE');
+      }
+
       const data = (await res.json().catch(() => ({}))) as Partial<WingEntry> & { error?: string; code?: string };
       if (!res.ok) throw new AiAPIError(data.error || '请求失败', data.code, res.status);
       return data;

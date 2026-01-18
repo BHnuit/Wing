@@ -4,7 +4,8 @@
  */
 
 import { AiService } from '../services/aiService';
-import type { AppSettings, AiProvider, RawFragment, Language } from '../types';
+import { parseSynthesisResult } from '../services/geminiService';
+import type { AppSettings, AiProvider, RawFragment, Language, WingEntry } from '../types';
 
 /** 构建代理用的最小 AppSettings */
 function buildSettings(p: {
@@ -38,6 +39,8 @@ export interface AiProxyBody {
   baseUrl?: string;
   model?: string;
   lang?: Language;
+  /** synthesize：为 true 且代理支持时以 SSE 流式返回，降低 TTFB */
+  stream?: boolean;
   /** synthesize */
   fragments?: RawFragment[];
   previousGeneration?: string;
@@ -50,6 +53,55 @@ export interface AiProxyResult {
   data?: unknown;
   error?: string;
   code?: string;
+}
+
+/** 流式合成事件：chunk | done(entry) | error */
+export type SynthesizeStreamEvent =
+  | { type: 'chunk'; chunk: string }
+  | { type: 'done'; entry: Partial<WingEntry> }
+  | { type: 'error'; error: string; code?: string };
+
+/**
+ * 流式合成：逐块 yield 文本并最终产出 entry，供 Vercel 等以 SSE 转发，降低 TTFB 超时
+ * @param body 须含 action='synthesize'、fragments、lang 等
+ * @yields { type: 'chunk', chunk } | { type: 'done', entry } | { type: 'error', error, code? }
+ */
+export async function* handleSynthesizeStream(body: AiProxyBody): AsyncGenerator<SynthesizeStreamEvent> {
+  if (!body || body.action !== 'synthesize' || !Array.isArray(body.fragments)) {
+    yield { type: 'error', error: 'synthesize 需要 fragments 数组', code: 'INVALID_BODY' };
+    return;
+  }
+  const { fragments, previousGeneration, lang = 'zh', provider, apiKey, baseUrl, model } = body;
+  const settings = buildSettings({ provider, apiKey, baseUrl, model, language: lang });
+  let full = '';
+  try {
+    for await (const c of AiService.synthesizeJournalStream(
+      fragments,
+      lang,
+      settings,
+      2,
+      typeof previousGeneration === 'string' ? previousGeneration : undefined
+    )) {
+      full += c;
+      yield { type: 'chunk', chunk: c };
+    }
+    const baseResult = parseSynthesisResult(full, previousGeneration, fragments);
+    const md = (baseResult.markdownContent != null && String(baseResult.markdownContent).trim() !== '')
+      ? baseResult.markdownContent
+      : (previousGeneration || '');
+    const partial: Pick<WingEntry, 'title' | 'mood' | 'summary' | 'markdownContent'> = {
+      title: baseResult.title ?? '',
+      mood: baseResult.mood ?? '',
+      summary: baseResult.summary ?? '',
+      markdownContent: md
+    };
+    const aiInsights = await AiService.regenerateInsight(partial, lang, settings);
+    const entry: Partial<WingEntry> = { ...baseResult, aiInsights, markdownContent: md };
+    yield { type: 'done', entry };
+  } catch (e) {
+    const err = e as { message?: string; code?: string };
+    yield { type: 'error', error: err?.message || '流式合成失败', code: err?.code };
+  }
 }
 
 /**

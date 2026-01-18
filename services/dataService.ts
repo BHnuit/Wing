@@ -19,6 +19,10 @@ export interface ExportData {
   apiKeys?: Partial<Record<AiProvider, string>>;
   /** 云端备份 WebDAV 设置（仅当设置「同时备份密钥」时包含） */
   webdav?: { webdavUrl: string; webdavUser: string; webdavPass: string };
+  /** 各供应商的模型名称（仅当设置「同时备份密钥」时包含） */
+  aiModels?: Partial<Record<AiProvider, string>>;
+  /** 自定义 Base URL（仅当设置「同时备份密钥」时包含） */
+  aiBaseUrl?: string;
 }
 
 const IMAGES_FOLDER = 'images';
@@ -78,21 +82,23 @@ export const exportData = (): string => {
       webdavUser: settings.webdavUser || '',
       webdavPass: settings.webdavPass || ''
     };
+    out.aiModels = settings.aiModels || {};
+    out.aiBaseUrl = settings.aiBaseUrl ?? '';
   }
 
   return JSON.stringify(out, null, 2);
 };
 
 /**
- * 导出数据并下载为 ZIP：data.json 仅存文本，图片放入 images/ 文件夹
+ * 构建与本地导出一致的备份 ZIP（data.json 文本 + images/ 图片），供下载或云端同步使用
  * - data.json：entries 用 imageRefs（路径），sessions 的 fragments 用 imageRef（路径），无 base64
  * - images/：entry_{entryId}_{fragmentId}.{ext}、frag_{sessionId}_{fragmentId}.{ext}
+ * @param entries 日记条目
+ * @param sessions 日会话
+ * @returns ZIP 的 Blob
  */
-export const downloadData = async (): Promise<void> => {
-  const entries = MockDataService.getEntries();
-  const sessions = MockDataService.getSessions();
+export async function buildBackupZip(entries: WingEntry[], sessions: DailySession[]): Promise<Blob> {
   const settings = MockDataService.getSettings();
-
   const zip = new JSZip();
 
   /** 供 data.json 使用的结构：无 base64，只有图片路径引用 */
@@ -143,11 +149,22 @@ export const downloadData = async (): Promise<void> => {
       webdavUser: settings.webdavUser || '',
       webdavPass: settings.webdavPass || ''
     };
+    dataJson.aiModels = settings.aiModels || {};
+    dataJson.aiBaseUrl = settings.aiBaseUrl ?? '';
   }
 
   zip.file('data.json', JSON.stringify(dataJson, null, 2));
+  return zip.generateAsync({ type: 'blob' });
+}
 
-  const blob = await zip.generateAsync({ type: 'blob' });
+/**
+ * 导出数据并下载为 ZIP：data.json 仅存文本，图片放入 images/ 文件夹
+ * 与 buildBackupZip 结构一致，供本地下载使用
+ */
+export const downloadData = async (): Promise<void> => {
+  const entries = MockDataService.getEntries();
+  const sessions = MockDataService.getSessions();
+  const blob = await buildBackupZip(entries, sessions);
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
@@ -172,6 +189,8 @@ async function resolveDataFromZip(zip: JSZip): Promise<{ data: ExportData | null
     sessions?: unknown[];
     apiKeys?: Partial<Record<AiProvider, string>>;
     webdav?: { webdavUrl: string; webdavUser: string; webdavPass: string };
+    aiModels?: Partial<Record<AiProvider, string>>;
+    aiBaseUrl?: string;
   };
   if (!parsed.entries || !Array.isArray(parsed.entries) || !parsed.sessions || !Array.isArray(parsed.sessions)) {
     return { data: null, message: '无效的数据格式' };
@@ -224,7 +243,9 @@ async function resolveDataFromZip(zip: JSZip): Promise<{ data: ExportData | null
     version: (parsed as { version?: string }).version || '1.0.0',
     timestamp: (parsed as { timestamp?: number }).timestamp || Date.now(),
     apiKeys: parsed.apiKeys,
-    webdav: parsed.webdav
+    webdav: parsed.webdav,
+    aiModels: parsed.aiModels,
+    aiBaseUrl: parsed.aiBaseUrl
   };
   return { data, message: '' };
 }
@@ -299,6 +320,12 @@ function applyImportMerge(data: ExportData): { success: boolean; message: string
       webdavPass: data.webdav.webdavPass !== undefined ? data.webdav.webdavPass : cur.webdavPass
     });
   }
+  if (data.aiModels != null && typeof data.aiModels === 'object') {
+    MockDataService.updateSettings({ aiModels: { ...(cur.aiModels || {}), ...data.aiModels } });
+  }
+  if (data.aiBaseUrl !== undefined) {
+    MockDataService.updateSettings({ aiBaseUrl: data.aiBaseUrl ?? '' });
+  }
   window.dispatchEvent(new Event('wing_data_updated'));
   return { success: true, message: `成功导入 ${data.entries.length} 条日记和 ${data.sessions.length} 个会话` };
 }
@@ -359,6 +386,12 @@ function applyReplace(data: ExportData): { success: boolean; message: string } {
       webdavUser: data.webdav.webdavUser ?? '',
       webdavPass: data.webdav.webdavPass ?? ''
     });
+  }
+  if (data.aiModels != null && typeof data.aiModels === 'object') {
+    MockDataService.updateSettings({ aiModels: data.aiModels });
+  }
+  if (data.aiBaseUrl !== undefined) {
+    MockDataService.updateSettings({ aiBaseUrl: data.aiBaseUrl ?? '' });
   }
   window.dispatchEvent(new Event('wing_data_updated'));
   return { success: true, message: `成功替换数据: ${data.entries.length} 条日记和 ${data.sessions.length} 个会话` };
