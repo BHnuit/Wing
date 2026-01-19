@@ -84,7 +84,7 @@ const ErrorFallback: React.FC<{ error: Error | null; onReset: () => void }> = ({
             <AlertTriangle className="text-rose-500" size={48} />
           </div>
           
-          <h2 className="serif text-2xl font-bold text-twilight-charcoal">
+          <h2 className="serif text-2xl font-bold text-twilight-charcoal dark:text-nocturnal-primary">
             {t('error_occurred')}
           </h2>
           

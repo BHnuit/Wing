@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Send, CheckCircle2, Image as ImageIcon, Loader2, Pencil, ChevronLeft, ChevronRight, Infinity } from 'lucide-react';
+import { Send, CheckCircle2, Image as ImageIcon, Loader2, ChevronLeft, ChevronRight, Infinity } from 'lucide-react';
 import { EmptyStateOwl, LoadingOwl, OwlLogo } from './OwlAssets';
 import { MockDataService } from '../services/mockDataService';
 import { AiService, AiAPIError, getEffectiveApiKey, getModelResponseLanguage } from '../services/aiService';
@@ -15,6 +15,59 @@ import { convertImageToBase64 } from '../utils/imageToBase64';
 /** 格式化为 HH:mm */
 const formatTime = (ms: number) =>
   new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+/** 5 分钟（毫秒），用于时间戳合并：同组内仅在最后一条消息下显示时间 */
+const TIMESTAMP_MERGE_MS = 5 * 60 * 1000;
+
+/**
+ * 判断该条 fragment 是否应显示时间戳（5 分钟内合并：仅在每组最后一条下显示）。
+ * @param next - 时间线中下一项，若无则为 undefined
+ * @param currT - 当前 fragment 的时间（editedAt ?? timestamp）
+ */
+function shouldShowTimestamp(
+  next: { type: string; t: number } | undefined,
+  currT: number
+): boolean {
+  if (!next) return true;
+  if (next.type !== 'fragment') return true;
+  return (next.t - currT) > TIMESTAMP_MERGE_MS;
+}
+
+type TimelineItem = { type: string; t: number; fragment?: RawFragment };
+
+/**
+ * 获取时间戳文案：连续段内若有任一条已编辑，仅在本段最后一条下方显示「已编辑 HH:mm」（取段内最晚 editedAt）。
+ * @param timeline - 统一时间线
+ * @param index - 当前 fragment 下标（且应满足 shouldShowTimestamp，即本组最后一条）
+ * @param t - 文案函数
+ * @param formatTime - 时间格式化
+ */
+function getSegmentTimeLabel(
+  timeline: TimelineItem[],
+  index: number,
+  t: (k: string) => string,
+  formatTime: (ms: number) => string
+): string {
+  const cur = timeline[index];
+  if (cur?.type !== 'fragment' || !cur.fragment) return formatTime(0);
+  const frag = cur.fragment;
+  const segment: RawFragment[] = [frag];
+  let j = index;
+  while (j > 0) {
+    const prev = timeline[j - 1];
+    if (prev.type !== 'fragment' || !prev.fragment) break;
+    if (timeline[j].t - prev.t > TIMESTAMP_MERGE_MS) break;
+    segment.unshift(prev.fragment);
+    j = j - 1;
+  }
+  const latestEdited = segment
+    .map((f) => f.editedAt)
+    .filter((x): x is number => x != null);
+  if (latestEdited.length > 0) {
+    return `${t('edited')} ${formatTime(Math.max(...latestEdited))}`;
+  }
+  return formatTime(frag.editedAt ?? frag.timestamp);
+}
 
 /** 校验 YYYY-MM-DD，无效则返回 todayFallback（本地日历日） */
 function toValidDate(dateStr: string | null, todayFallback: string): string {
@@ -42,9 +95,7 @@ const ChatView: React.FC = () => {
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** 长按进入 ♾️ 后的首次点击忽略，避免「松开即触发」 */
   const infinityModeJustEnteredRef = useRef(false);
-  /** 记录最后一次指针类型，用于区分触屏长按与鼠标连点 */
-  const lastPointerTypeRef = useRef<string>('mouse');
-  /** 鼠标模式下连点三次进入收拢：点击次数与时间窗 */
+  /** 鼠标/触屏连点两次进入收拢：点击次数与时间窗 */
   const clickCountRef = useRef(0);
   const lastClickTimeRef = useRef(0);
   const inputContainerRef = useRef<HTMLDivElement>(null);
@@ -214,7 +265,7 @@ const ChatView: React.FC = () => {
     triggerRealtimeSyncIfEnabled(settings);
     setIsSynthesizing(true);
     try {
-      /** 再次收拢：当日已有日记则覆盖该日记 */
+      /** 再次收拢：当日已有日记则新建一篇（传入旧正文供 AI 参考），不覆盖原日记 */
       if (session.status === SessionStatus.COMPLETED && session.finalEntryId) {
         const entry = MockDataService.getEntryById(session.finalEntryId);
         if (entry) {
@@ -228,25 +279,32 @@ const ChatView: React.FC = () => {
           );
           const images: { [key: string]: string } = {};
           session.fragments.forEach((f) => {
-            if (f.type === FragmentType.IMAGE && f.imageData) images[f.id] = f.imageData;
+            if (f.type === FragmentType.IMAGE && (f.imageData || entry.images?.[f.id]))
+              images[f.id] = f.imageData || entry.images![f.id];
           });
-          const finalImages = Object.keys(images).length > 0 ? images : (session.fragments.length > 0 ? undefined : entry.images);
-          const resolvedMd = (synthesized.markdownContent != null && String(synthesized.markdownContent).trim() !== '')
-            ? synthesized.markdownContent
-            : entry.markdownContent;
-          const resolvedTodos = (synthesized.todos && synthesized.todos.length > 0) ? synthesized.todos : (entry.todos || []);
-
-          const updates = {
+          const completedAt = Date.now();
+          const newEntry: WingEntry = {
+            id: crypto.randomUUID(),
             title: synthesized.title ?? entry.title,
             summary: synthesized.summary ?? entry.summary,
             mood: synthesized.mood ?? entry.mood,
-            markdownContent: resolvedMd,
+            markdownContent: (synthesized.markdownContent != null && String(synthesized.markdownContent).trim() !== '')
+              ? synthesized.markdownContent
+              : (entry.markdownContent ?? (entry as { content?: string }).content ?? ''),
             aiInsights: synthesized.aiInsights ?? entry.aiInsights,
-            todos: resolvedTodos,
-            generatedAt: Date.now(),
-            ...(finalImages !== undefined && { images: finalImages })
+            todos: (synthesized.todos && synthesized.todos.length > 0) ? synthesized.todos : (entry.todos || []),
+            createdAt: new Date(viewDate + 'T12:00:00').getTime(),
+            generatedAt: completedAt,
+            images: Object.keys(images).length > 0 ? images : undefined
           };
-          MockDataService.updateEntry(entry.id, updates);
+          MockDataService.saveEntry(newEntry);
+          const latest = MockDataService.getSessionByDate(viewDate)!;
+          MockDataService.saveSession({
+            ...latest,
+            finalEntryId: newEntry.id,
+            gatherCompletions: [...(latest.gatherCompletions ?? []), { completedAt, entryId: newEntry.id, title: newEntry.title }]
+          });
+          setSession(MockDataService.getSessionByDate(viewDate)!);
           triggerRealtimeSyncIfEnabled(settings);
           return;
         }
@@ -274,12 +332,23 @@ const ChatView: React.FC = () => {
       };
 
       MockDataService.saveEntry(newEntry);
-      const updatedSession = { ...session, status: SessionStatus.COMPLETED, finalEntryId: newEntry.id };
+      const completedAt = Date.now();
+      const latestForFirst = MockDataService.getSessionByDate(viewDate)!;
+      const updatedSession = {
+        ...latestForFirst,
+        status: SessionStatus.COMPLETED,
+        finalEntryId: newEntry.id,
+        gatherCompletions: [...(latestForFirst.gatherCompletions ?? []), { completedAt, entryId: newEntry.id, title: newEntry.title }]
+      };
       MockDataService.saveSession(updatedSession);
       setSession(MockDataService.getSessionByDate(viewDate)!);
       triggerRealtimeSyncIfEnabled(settings);
     } catch (error) {
       console.error('Synthesis failed:', error);
+      if ((error as { code?: string })?.code === 'QUOTA_EXCEEDED') {
+        showToast(t('storage_quota_exceeded'), 'error');
+        return;
+      }
       let errorMessage = t('synth_failed');
       if (error instanceof AiAPIError) {
         switch (error.code) {
@@ -299,14 +368,28 @@ const ChatView: React.FC = () => {
   const fragments = session?.fragments ?? [];
   const isCompleted = session?.status === SessionStatus.COMPLETED;
 
-  /** 从当日会话与日记数据推导猫头鹰生成消息，不随日期切换清空 */
-  const owlGeneratedEntry =
-    session?.status === SessionStatus.COMPLETED && session.finalEntryId
-      ? (() => {
-          const e = MockDataService.getEntryById(session.finalEntryId!);
-          return e ? { id: e.id, title: e.title, generatedAt: e.generatedAt ?? e.createdAt } : null;
-        })()
-      : null;
+  /**
+   * 收拢时间线：合并「开始收拢」与「已生成《xx》」，按时间排序；再次生成时多条叠加展示。
+   * 旧数据无 gatherCompletions 时，从 finalEntryId 推导一条以保持兼容。
+   */
+  const gatherCompletionsForTimeline =
+    session?.gatherCompletions?.length
+      ? session.gatherCompletions
+      : session?.finalEntryId
+        ? (() => {
+            const e = MockDataService.getEntryById(session.finalEntryId!);
+            return e ? [{ completedAt: e.generatedAt ?? e.createdAt, entryId: e.id, title: e.title }] : [];
+          })()
+        : [];
+  /**
+   * 与用户记录、收拢提示、生成提示按时间混合排序，用于统一时间线渲染。
+   * 收拢：首次为「开始收拢羽毛」，再次为「再次收拢羽毛」。
+   */
+  const unifiedTimeline = [
+    ...fragments.map((f) => ({ t: f.editedAt ?? f.timestamp, type: 'fragment' as const, fragment: f })),
+    ...(session?.gatherStartedAt ?? []).map((t, i) => ({ t, type: 'started' as const, isRegather: i > 0 })),
+    ...gatherCompletionsForTimeline.map((c) => ({ t: c.completedAt, type: 'completed' as const, entryId: c.entryId, title: c.title }))
+  ].sort((a, b) => a.t - b.t);
 
   /** 有记录的日期列表（含今天），用于日期选择器；仅在这些日期间切换，空白日期不显示 */
   const datesForPicker = MockDataService.getDatesWithRecordsForPicker();
@@ -358,7 +441,7 @@ const ChatView: React.FC = () => {
         </button>
       </div>
 
-      <div className="flex-1 min-h-0 overflow-y-auto p-6 space-y-6">
+      <div className="flex-1 min-h-0 overflow-y-auto p-6">
         {fragments.length === 0 ? (
           <div className="h-[60vh] flex flex-col items-center justify-center text-twilight-duskLight dark:text-nocturnal-secondary space-y-4">
             <EmptyStateOwl size={100} />
@@ -367,127 +450,136 @@ const ChatView: React.FC = () => {
             </p>
           </div>
         ) : (
-          fragments.map((fragment) => {
-            const isEditing = editingId === fragment.id;
-            const canEdit = !!session;
-            const timeLabel = fragment.editedAt
-              ? `${t('edited')} ${formatTime(fragment.editedAt)}`
-              : formatTime(fragment.timestamp);
-
-            return (
-              <div key={fragment.id} className="flex flex-col items-end">
-                <div className="max-w-[85%] bg-twilight-cream dark:bg-nocturnal-surface border border-twilight-divider dark:border-nocturnal-secondary/25 rounded-2xl rounded-tr-none shadow-sm overflow-hidden">
-                  {fragment.type === FragmentType.IMAGE && fragment.imageData ? (
-                    <div className="relative">
-                      <img
-                        src={fragment.imageData}
-                        alt={fragment.content}
-                        className="max-w-full h-auto object-cover"
-                        style={{ maxHeight: '400px' }}
-                      />
-                      {isEditing ? (
-                        <div className="px-4 py-2 bg-twilight-cream/30 dark:bg-nocturnal-bg/40 border-t border-twilight-divider dark:border-nocturnal-secondary/20">
-                          <textarea
-                            value={editDraft}
-                            onChange={(e) => setEditDraft(e.target.value)}
-                            placeholder={t('image_placeholder')}
-                            className="w-full text-xs text-twilight-warm dark:text-nocturnal-secondary bg-transparent border-none resize-none focus:outline-none focus:ring-0 min-h-[2rem]"
-                            rows={2}
-                            autoFocus
-                          />
-                        </div>
-                      ) : (
-                        (fragment.content && fragment.content !== t('image_placeholder')) && (
-                          <div className="px-4 py-2 bg-twilight-cream/30 dark:bg-nocturnal-bg/40 border-t border-twilight-divider dark:border-nocturnal-secondary/20">
-                            <p className="text-xs text-twilight-duskLight dark:text-nocturnal-secondary">{fragment.content}</p>
+          unifiedTimeline.map((ev, i) => {
+            if (ev.type === 'fragment') {
+              const fragment = ev.fragment;
+              const isEditing = editingId === fragment.id;
+              const canEdit = !!session;
+              const currT = fragment.editedAt ?? fragment.timestamp;
+              /** 5 分钟内与下一条合并，仅在本组最后一条下显示时间戳；「已编辑」亦仅在该条显示 */
+              const showTs = shouldShowTimestamp(unifiedTimeline[i + 1], currT);
+              /** 与上一条同为 fragment 且间隔 ≤5 分钟则视为同一连续段，缩小上边距 */
+              const prev = unifiedTimeline[i - 1];
+              const prevInSameSegment = i > 0 && prev?.type === 'fragment' && (ev.t - prev.t) <= TIMESTAMP_MERGE_MS;
+              const mtClass = i === 0 ? '' : prevInSameSegment ? 'mt-2' : 'mt-6';
+              return (
+                <div key={`fragment-${fragment.id}`} className={`flex flex-col items-end ${mtClass}`}>
+                  <div
+                    className={`max-w-[85%] bg-twilight-cream dark:bg-nocturnal-surface border border-twilight-divider dark:border-nocturnal-secondary/25 rounded-2xl rounded-tr-none shadow-sm overflow-hidden ${canEdit && !isEditing ? 'cursor-pointer' : ''}`}
+                    onDoubleClick={() => { if (!isEditing && canEdit) startEdit(fragment); }}
+                    title={canEdit && !isEditing ? t('double_click_to_edit') : undefined}
+                    aria-label={canEdit && !isEditing ? t('double_click_to_edit') : undefined}
+                  >
+                    {fragment.type === FragmentType.IMAGE && fragment.imageData ? (
+                      <div className="relative">
+                        <img
+                          src={fragment.imageData}
+                          alt={fragment.content}
+                          className="max-w-full h-auto object-cover"
+                          style={{ maxHeight: '400px' }}
+                        />
+                        {isEditing ? (
+                          <div className="px-3 py-1.5 bg-twilight-cream/30 dark:bg-nocturnal-bg/40 border-t border-twilight-divider dark:border-nocturnal-secondary/20">
+                            <textarea
+                              value={editDraft}
+                              onChange={(e) => setEditDraft(e.target.value)}
+                              placeholder={t('image_placeholder')}
+                              className="w-full text-[0.6875rem] text-twilight-warm dark:text-nocturnal-secondary bg-transparent border-none resize-none focus:outline-none focus:ring-0 min-h-[1.75rem] leading-snug"
+                              rows={2}
+                              autoFocus
+                            />
                           </div>
-                        )
+                        ) : (
+                          (fragment.content && fragment.content !== t('image_placeholder')) && (
+                            <div className="px-3 py-1.5 bg-twilight-cream/30 dark:bg-nocturnal-bg/40 border-t border-twilight-divider dark:border-nocturnal-secondary/20">
+                              <p className="text-[0.6875rem] leading-snug text-twilight-duskLight dark:text-nocturnal-secondary">{fragment.content}</p>
+                            </div>
+                          )
+                        )}
+                      </div>
+                    ) : isEditing ? (
+                      <div className="px-3 py-2">
+                        <textarea
+                          value={editDraft}
+                          onChange={(e) => setEditDraft(e.target.value)}
+                          placeholder={t('mind_placeholder')}
+                          className="w-full text-[0.8125rem] text-twilight-charcoal dark:text-nocturnal-primary leading-snug bg-transparent border-none resize-none focus:outline-none focus:ring-0 min-h-[3.5rem]"
+                          rows={4}
+                          autoFocus
+                        />
+                      </div>
+                    ) : (
+                      <div className="px-3 py-2">
+                        <p className="text-[0.8125rem] text-twilight-charcoal dark:text-nocturnal-primary leading-snug">{fragment.content}</p>
+                      </div>
+                    )}
+                  </div>
+                  {(isEditing || showTs) && (
+                    <div className="flex items-center gap-1.5 mt-0.5 mr-1">
+                      {isEditing ? (
+                        <>
+                          <button
+                            type="button"
+                            onClick={saveEdit}
+                            disabled={fragment.type === FragmentType.TEXT && !editDraft.trim()}
+                            className="text-[0.625rem] text-twilight-amber dark:text-nocturnal-accent font-medium hover:underline disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:no-underline"
+                          >
+                            {t('save')}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={cancelEdit}
+                            className="text-[0.625rem] text-twilight-duskLight dark:text-nocturnal-secondary hover:text-twilight-amber dark:hover:text-nocturnal-accent"
+                          >
+                            {t('cancel')}
+                          </button>
+                        </>
+                      ) : (
+                        <span className="text-[0.625rem] text-twilight-duskLight dark:text-nocturnal-secondary">
+                          {getSegmentTimeLabel(unifiedTimeline, i, t, formatTime)}
+                        </span>
                       )}
-                    </div>
-                  ) : isEditing ? (
-                    <div className="px-4 py-3">
-                      <textarea
-                        value={editDraft}
-                        onChange={(e) => setEditDraft(e.target.value)}
-                        placeholder={t('mind_placeholder')}
-                        className="w-full text-twilight-charcoal dark:text-nocturnal-primary leading-relaxed bg-transparent border-none resize-none focus:outline-none focus:ring-0 min-h-[4rem]"
-                        rows={4}
-                        autoFocus
-                      />
-                    </div>
-                  ) : (
-                    <div className="px-4 py-3">
-                      <p className="text-twilight-charcoal dark:text-nocturnal-primary leading-relaxed">{fragment.content}</p>
                     </div>
                   )}
                 </div>
-                <div className="flex items-center gap-1.5 mt-1 mr-1">
-                  {isEditing ? (
-                    <>
-                      <button
-                        type="button"
-                        onClick={saveEdit}
-                        disabled={fragment.type === FragmentType.TEXT && !editDraft.trim()}
-                        className="text-[10px] text-twilight-amber dark:text-nocturnal-accent font-medium hover:underline disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:no-underline"
-                      >
-                        {t('save')}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={cancelEdit}
-                        className="text-[10px] text-twilight-duskLight dark:text-nocturnal-secondary hover:text-twilight-amber dark:hover:text-nocturnal-accent"
-                      >
-                        {t('cancel')}
-                      </button>
-                    </>
-                  ) : (
-                    <>
-                      {canEdit && (
-                        <button
-                          type="button"
-                          onClick={() => startEdit(fragment)}
-                          className="p-0.5 text-twilight-duskLight dark:text-nocturnal-secondary hover:text-twilight-amber dark:hover:text-nocturnal-accent rounded"
-                          title={t('edit')}
-                          aria-label={t('edit')}
-                        >
-                          <Pencil size={12} />
-                        </button>
-                      )}
-                      <span className="text-[10px] text-twilight-duskLight dark:text-nocturnal-secondary">{timeLabel}</span>
-                    </>
-                  )}
+              );
+            }
+            if (ev.type === 'started') {
+              return (
+                <p key={`gather-started-${ev.t}-${i}`} className={`text-xs text-twilight-duskLight dark:text-nocturnal-secondary text-center py-2 ${i === 0 ? '' : 'mt-6'}`}>
+                  {formatTime(ev.t)} {ev.isRegather ? t('gathering_regather') : t('gathering_started')}
+                </p>
+              );
+            }
+            const compIdx = gatherCompletionsForTimeline.findIndex((c) => c.completedAt === ev.t && c.entryId === ev.entryId);
+            const isRegather = compIdx > 0;
+            const msg = isRegather
+              ? (viewDate === today ? t('owl_diary_regenerated_today') : t('owl_diary_regenerated_that_day'))
+              : (viewDate === today ? t('owl_diary_generated_today') : t('owl_diary_generated_that_day'));
+            return (
+              <div key={`gather-completed-${ev.t}-${ev.entryId}`} className={`flex flex-col items-start ${i === 0 ? '' : 'mt-6'}`}>
+                <div className="flex items-center gap-2 max-w-[85%]">
+                  <div className="flex-shrink-0 w-8 h-8 rounded-full bg-twilight-cream dark:bg-nocturnal-surface border border-twilight-divider dark:border-nocturnal-secondary/25 flex items-center justify-center overflow-hidden">
+                    <OwlLogo size={20} className="dark:invert" />
+                  </div>
+                  <div className="bg-twilight-cream dark:bg-nocturnal-surface border border-twilight-divider dark:border-nocturnal-secondary/25 rounded-2xl rounded-tl-none px-3 py-2 shadow-sm">
+                    <p className="text-[0.8125rem] leading-snug text-twilight-charcoal dark:text-nocturnal-primary">
+                      {msg}
+                      《<Link to={`/journal/${ev.entryId}`} className="text-twilight-amber dark:text-nocturnal-accent font-medium hover:underline">{ev.title}</Link>》
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 mt-0.5">
+                  <div className="w-8 flex-shrink-0" aria-hidden="true" />
+                  <span className="text-[0.625rem] text-twilight-duskLight dark:text-nocturnal-secondary">
+                    {formatTime(ev.t)}
+                  </span>
                 </div>
               </div>
             );
           })
         )}
-        {(session?.gatherStartedAt ?? []).map((ts, i) => (
-          <p key={`gather-${ts}-${i}`} className="text-xs text-twilight-duskLight dark:text-nocturnal-secondary text-center py-2">
-            {formatTime(ts)} {t('gathering_started')}
-          </p>
-        ))}
-        {owlGeneratedEntry && (
-          <div className="flex flex-col items-start">
-            <div className="flex items-center gap-2 max-w-[85%]">
-              <div className="flex-shrink-0 w-8 h-8 rounded-full bg-twilight-cream dark:bg-nocturnal-surface border border-twilight-divider dark:border-nocturnal-secondary/25 flex items-center justify-center overflow-hidden">
-                <OwlLogo size={20} className="dark:invert" />
-              </div>
-              <div className="bg-twilight-cream dark:bg-nocturnal-surface border border-twilight-divider dark:border-nocturnal-secondary/25 rounded-2xl rounded-tl-none px-4 py-3 shadow-sm">
-                <p className="text-sm text-twilight-charcoal dark:text-nocturnal-primary">
-                  {viewDate === today ? t('owl_diary_generated_today') : t('owl_diary_generated_that_day')}
-                  《<Link to={`/journal/${owlGeneratedEntry.id}`} className="text-twilight-amber dark:text-nocturnal-accent font-medium hover:underline">{owlGeneratedEntry.title}</Link>》
-                </p>
-              </div>
-            </div>
-            <div className="flex items-center gap-2 mt-1">
-              <div className="w-8 flex-shrink-0" aria-hidden="true" />
-              <span className="text-[10px] text-twilight-duskLight dark:text-nocturnal-secondary">
-                {formatTime(owlGeneratedEntry.generatedAt)}
-              </span>
-            </div>
-          </div>
-        )}
-        <div ref={scrollRef} />
+        <div ref={scrollRef} className="mt-6" />
       </div>
 
       {/* 占位：避免最后一条内容被固定消息栏遮挡 */}
@@ -508,7 +600,15 @@ const ChatView: React.FC = () => {
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onFocus={() => setInputFocused(true)}
-              onBlur={() => setInputFocused(false)}
+              onBlur={() => {
+                /** 延迟一帧判断：若焦点仍在输入容器内（如点击了发送/加图按钮），不折叠，避免无法发送或连点/长按进入收拢模式 */
+                const container = inputContainerRef.current;
+                requestAnimationFrame(() => {
+                  const el = document.activeElement;
+                  if (container && el != null && container.contains(el)) return;
+                  setInputFocused(false);
+                });
+              }}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && !e.shiftKey) {
                   e.preventDefault();
@@ -522,7 +622,7 @@ const ChatView: React.FC = () => {
               <CheckCircle2 className="text-green-500" size={20} />
             </div>
           </div>
-          {(inputFocused || fragments.length > 0) && (
+          {inputFocused && (
             <div className="flex justify-between items-center px-3 pb-2 pt-0">
               <button
                 type="button"
@@ -533,7 +633,20 @@ const ChatView: React.FC = () => {
               >
                 <ImageIcon size={20} />
               </button>
-              <button
+              <div className="flex items-center gap-2">
+                {!input.trim() && fragments.length > 0 && !infinityMode && !isSynthesizing && (
+                  <span className="text-[0.625rem] text-twilight-duskLight dark:text-nocturnal-secondary whitespace-nowrap">
+                    {t('hint_longpress_switch_ai')}
+                  </span>
+                )}
+                {infinityMode && !isSynthesizing && (
+                  <span className="text-[0.625rem] text-twilight-duskLight dark:text-nocturnal-secondary whitespace-nowrap">
+                    {isCompleted && session?.finalEntryId
+                      ? (viewDate === today ? t('hint_click_regenerate_today') : t('hint_click_regenerate_that_day'))
+                      : (viewDate === today ? t('hint_click_generate_today') : t('hint_click_generate_that_day'))}
+                  </span>
+                )}
+                <button
                 type="button"
                 disabled={isSynthesizing}
                 onClick={
@@ -550,25 +663,19 @@ const ChatView: React.FC = () => {
                       : input.trim()
                         ? handleSend
                         : () => {
-                            /** 灰色按钮：仅鼠标模式下连点三次进入收拢；触屏用长按，此处不处理 */
-                            if (lastPointerTypeRef.current !== 'mouse') return;
+                            /** 灰色按钮：鼠标连点两次、触屏双击均可进入收拢（触屏长按由 onPointerDown 处理） */
                             const now = Date.now();
                             if (now - lastClickTimeRef.current > 500) clickCountRef.current = 0;
                             clickCountRef.current += 1;
                             lastClickTimeRef.current = now;
-                            if (clickCountRef.current >= 3) {
+                            if (clickCountRef.current >= 2) {
                               clickCountRef.current = 0;
                               setInfinityMode(true);
                             }
                           }
                 }
                 onPointerDown={(e) => {
-                  lastPointerTypeRef.current = e.pointerType ?? 'mouse';
-                  /** 灰色按钮时阻止焦点移开文本框，避免折叠导致无法连点（鼠标）或长按被中断（触屏） */
-                  if (!input.trim() && !infinityMode && !isSynthesizing) {
-                    e.preventDefault();
-                  }
-                  /** 仅触屏长按 1 秒进入收拢；鼠标用连点三次 */
+                  /** 触屏长按 1 秒进入收拢；鼠标与触屏亦可连点两次（onClick 处理）。不在此处 preventDefault，避免干扰输入框聚焦与输入；折叠由 onBlur 内「焦点是否仍在容器内」判断控制 */
                   if (!input.trim() && !infinityMode && !isSynthesizing && (e.pointerType === 'touch' || e.pointerType === 'pen')) {
                     longPressTimerRef.current = setTimeout(() => {
                       longPressTimerRef.current = null;
@@ -611,6 +718,7 @@ const ChatView: React.FC = () => {
                   <Send size={18} />
                 )}
               </button>
+              </div>
             </div>
           )}
         </div>

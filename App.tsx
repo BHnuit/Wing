@@ -64,6 +64,12 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     return () => m.removeEventListener('change', onChange);
   }, [settings.theme]);
 
+  /** 根据字号设置缩放 html 根字号，以等比影响全站 rem；大 18px、中 16px、小 14px */
+  useEffect(() => {
+    const v = settings.fontSize ?? 'medium';
+    document.documentElement.dataset.fontSize = v;
+  }, [settings.fontSize]);
+
   return (
     <div
       className="min-h-screen max-w-2xl mx-auto flex flex-col bg-twilight-bg dark:bg-nocturnal-bg relative border-x border-twilight-divider dark:border-nocturnal-secondary/25 shadow-sm overflow-hidden"
@@ -75,7 +81,7 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
         <header className="sticky top-0 z-50 glass px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <OwlLogo size={26} stroke="currentColor" className="text-twilight-charcoal dark:text-nocturnal-primary" />
-            <h1 className="serif text-2xl font-bold tracking-tight text-twilight-charcoal dark:text-nocturnal-primary">Wing</h1>
+            <span className="serif text-2xl font-bold tracking-tight text-twilight-charcoal dark:text-nocturnal-primary">Wing</span>
           </div>
         </header>
       )}

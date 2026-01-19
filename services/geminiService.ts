@@ -91,6 +91,20 @@ export class GeminiAPIError extends Error {
   }
 }
 
+/**
+ * 构建供 API 使用的 fragment 文本：IMAGE 仅占位不带 content，避免 filename 等无关内容；
+ * 若 content 为 data URL 或超长（>2000）则用 [已省略]，防止 base64 或异常长文本导致请求超限或失败。
+ * @param f 碎片
+ * @returns 安全的内容片段，供拼入 inputContext
+ */
+export function safeFragmentContentForPrompt(f: RawFragment): string {
+  const isImage = f.type === 'IMAGE' || (f as { type?: string }).type === 'IMAGE';
+  if (isImage) return '';
+  const c = String(f.content ?? '');
+  if (c.startsWith('data:') || c.length > 2000) return '[已省略]';
+  return c;
+}
+
 export const GeminiService = {
   /**
    * 合成日记
@@ -132,12 +146,13 @@ export const GeminiService = {
         
         const inputContext = fragments
           .sort((a, b) => a.timestamp - b.timestamp)
-          .map(f => `[${new Date(f.timestamp).toLocaleTimeString()}] ${f.type === 'IMAGE' ? '[Image]' : ''} ${f.content}`)
+          .map(f => `[${new Date(f.timestamp).toLocaleTimeString()}] ${f.type === 'IMAGE' ? '[Image]' : ''} ${safeFragmentContentForPrompt(f)}`)
           .join('\n');
 
         let fullInput = `这是用户今天的记录：\n\n${inputContext}`;
         if (previousGeneration?.trim()) {
-          fullInput += `\n\n[已生成的日记正文，供重新生成时参考]\n${previousGeneration}\n\n【重新生成】content_markdown 必须为**重新撰写**的正文：请对上述原文进行重写、润色或合并当日新记录，**禁止逐字照抄原文**，输出的正文须在表述、结构或详略上与原文有可见差异。todos：从当日记录或上述正文中提取待办，若无则填 []。`;
+          const pg = previousGeneration.length > 30000 ? previousGeneration.slice(0, 30000) + '\n\n...(正文过长已截断)' : previousGeneration;
+          fullInput += `\n\n[已生成的日记正文，供重新生成时参考]\n${pg}\n\n【重新生成】content_markdown 必须为**重新撰写**的正文：请对上述原文进行重写、润色或合并当日新记录，**禁止逐字照抄原文**，输出的正文须在表述、结构或详略上与原文有可见差异。todos：从当日记录或上述正文中提取待办，若无则填 []。`;
         }
 
         const response = await ai.models.generateContent({
@@ -220,12 +235,13 @@ export const GeminiService = {
 
     const inputContext = fragments
       .sort((a, b) => a.timestamp - b.timestamp)
-      .map(f => `[${new Date(f.timestamp).toLocaleTimeString()}] ${f.type === 'IMAGE' ? '[Image]' : ''} ${f.content}`)
+      .map(f => `[${new Date(f.timestamp).toLocaleTimeString()}] ${f.type === 'IMAGE' ? '[Image]' : ''} ${safeFragmentContentForPrompt(f)}`)
       .join('\n');
 
     let fullInput = `这是用户今天的记录：\n\n${inputContext}`;
     if (previousGeneration?.trim()) {
-      fullInput += `\n\n[已生成的日记正文，供重新生成时参考]\n${previousGeneration}\n\n【重新生成】content_markdown 必须为**重新撰写**的正文：请对上述原文进行重写、润色或合并当日新记录，**禁止逐字照抄原文**，输出的正文须在表述、结构或详略上与原文有可见差异。todos：从当日记录或上述正文中提取待办，若无则填 []。`;
+      const pg = previousGeneration.length > 30000 ? previousGeneration.slice(0, 30000) + '\n\n...(正文过长已截断)' : previousGeneration;
+      fullInput += `\n\n[已生成的日记正文，供重新生成时参考]\n${pg}\n\n【重新生成】content_markdown 必须为**重新撰写**的正文：请对上述原文进行重写、润色或合并当日新记录，**禁止逐字照抄原文**，输出的正文须在表述、结构或详略上与原文有可见差异。todos：从当日记录或上述正文中提取待办，若无则填 []。`;
     }
 
     let lastError: Error | null = null;
@@ -332,12 +348,14 @@ export function buildInsightUserContent(
   const instruction = (insightPrompt && insightPrompt.trim())
     ? insightPrompt.trim()
     : DEFAULT_INSIGHT_INSTRUCTION(lang);
+  const md = entry.markdownContent || '（无）';
+  const mdSafe = md.length > 6000 ? md.slice(0, 6000) + '\n\n...(正文过长已截断)' : md;
   return `${instruction}
 
 标题：${entry.title || '（无）'}
 心情：${entry.mood || '（无）'}
 概括：${entry.summary || '（无）'}
-正文：\n${entry.markdownContent || '（无）'}`;
+正文：\n${mdSafe}`;
 }
 
 /** 解析合成结果 JSON 并做 [Image] 占位补全，返回 WingEntry 部分字段；供 geminiService 与 aiHandler 流式解析共用 */

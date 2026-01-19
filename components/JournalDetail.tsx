@@ -252,6 +252,10 @@ const JournalDetail: React.FC = () => {
       }
     } catch (err) {
       console.error('Regenerate failed:', err);
+      if ((err as { code?: string })?.code === 'QUOTA_EXCEEDED') {
+        showToast(t('storage_quota_exceeded'), 'error');
+        return;
+      }
       let msg = t('regen_failed');
       if (err instanceof AiAPIError) {
         if (err.code === 'MISSING_API_KEY') msg = t('api_key_missing');
@@ -294,10 +298,16 @@ const JournalDetail: React.FC = () => {
       createdAt: Date.now(),
       images: entry.images ? { ...entry.images } : undefined
     };
-    MockDataService.saveEntry(newEntry);
-    triggerRealtimeSyncIfEnabled(settings);
-    showToast(t('copy_as_new_success'), 'success', 2000);
-    navigate(`/journal/${newEntry.id}`);
+    try {
+      MockDataService.saveEntry(newEntry);
+      triggerRealtimeSyncIfEnabled(settings);
+      showToast(t('copy_as_new_success'), 'success', 2000);
+      navigate(`/journal/${newEntry.id}`);
+    } catch (e) {
+      if ((e as { code?: string })?.code === 'QUOTA_EXCEEDED') {
+        showToast(t('storage_quota_exceeded'), 'error');
+      } else throw e;
+    }
   };
 
   /** 删除日记并返回列表（由删除确认弹窗触发） */
@@ -470,7 +480,7 @@ const JournalDetail: React.FC = () => {
             className="bg-twilight-cream dark:bg-nocturnal-surface rounded-2xl p-6 max-w-sm w-full mx-4 shadow-xl border border-twilight-divider dark:border-nocturnal-secondary/20"
             onClick={(e) => e.stopPropagation()}
           >
-            <h3 className="serif text-xl font-bold text-twilight-charcoal dark:text-nocturnal-primary mb-2">{t('regenerate_modal_title')}</h3>
+            <h3 className="serif text-xl font-semibold text-twilight-charcoal dark:text-nocturnal-primary mb-2">{t('regenerate_modal_title')}</h3>
             <p className="text-twilight-warm dark:text-nocturnal-secondary text-sm mb-4">{t('regenerate_modal_desc')}</p>
             <div className="flex flex-col gap-2">
               <button
@@ -506,7 +516,7 @@ const JournalDetail: React.FC = () => {
               <div className="flex-shrink-0 w-10 h-10 rounded-full bg-rose-50 dark:bg-rose-900/40 flex items-center justify-center">
                 <Trash2 size={20} className="text-rose-600 dark:text-rose-400" />
               </div>
-              <h3 className="serif text-xl font-bold text-twilight-charcoal dark:text-nocturnal-primary">{t('delete_modal_title')}</h3>
+              <h3 className="serif text-xl font-semibold text-twilight-charcoal dark:text-nocturnal-primary">{t('delete_modal_title')}</h3>
             </div>
             <p className="text-twilight-warm dark:text-nocturnal-secondary text-sm mb-4">{t('delete_confirm')}</p>
             <div className="flex flex-col gap-2">
@@ -571,10 +581,10 @@ const JournalDetail: React.FC = () => {
 
       <div className="px-8 mb-12">
         <div className="flex items-center justify-between mb-6">
-          <h3 className="serif text-2xl font-bold text-twilight-charcoal dark:text-nocturnal-primary flex items-center gap-2">
-            <Infinity size={24} className="text-twilight-amber dark:text-nocturnal-accent flex-shrink-0" />
+          <h2 className="serif text-xl font-bold text-twilight-charcoal dark:text-nocturnal-primary flex items-center gap-2">
+            <Infinity size={20} className="text-twilight-amber dark:text-nocturnal-accent flex-shrink-0" />
             {t('owl_insight')}
-          </h3>
+          </h2>
           <button
             onClick={doRegenerateInsight}
             disabled={isRegeneratingInsight}
@@ -586,7 +596,7 @@ const JournalDetail: React.FC = () => {
           </button>
         </div>
         <div className="flex items-center gap-4 bg-twilight-cream/40 dark:bg-nocturnal-surface/50 p-4 rounded-2xl border border-twilight-divider dark:border-nocturnal-secondary/20">
-          <p className="serif italic text-lg text-twilight-charcoal dark:text-nocturnal-primary leading-relaxed flex-1">
+          <p className="serif italic text-base text-twilight-charcoal dark:text-nocturnal-primary leading-relaxed flex-1">
             "{entry.aiInsights}"
           </p>
         </div>
@@ -595,10 +605,10 @@ const JournalDetail: React.FC = () => {
       {entry.todos.length > 0 && (
         <div className="px-8 pb-8">
           <div className="flex items-center justify-between mb-6">
-            <h3 className="serif text-2xl font-bold text-twilight-charcoal dark:text-nocturnal-primary flex items-center gap-2">
-              <Bell className="text-twilight-amber dark:text-nocturnal-accent" size={24} />
-              {t('tasks_captured')}
-            </h3>
+<h2 className="serif text-xl font-bold text-twilight-charcoal dark:text-nocturnal-primary flex items-center gap-2">
+            <Bell className="text-twilight-amber dark:text-nocturnal-accent" size={20} />
+            {t('tasks_captured')}
+          </h2>
             <span className="text-xs bg-twilight-cream/80 dark:bg-nocturnal-surface/80 text-twilight-duskLight dark:text-nocturnal-secondary px-3 py-1 rounded-full border border-twilight-divider dark:border-nocturnal-secondary/25">
               {t('synced_reminders')}
             </span>
@@ -680,20 +690,20 @@ const JournalDetail: React.FC = () => {
             <MarkdownRenderer content={entry.markdownContent} entry={entry} sessionImageFragments={sessionImageFragments} />
           </div>
           <div className="mb-8">
-            <h3 className="serif text-2xl font-bold text-twilight-charcoal flex items-center gap-2 mb-4">
-              <Infinity size={24} className="text-twilight-amber flex-shrink-0" />
+            <h2 className="serif text-xl font-bold text-twilight-charcoal flex items-center gap-2 mb-4">
+              <Infinity size={20} className="text-twilight-amber flex-shrink-0" />
               {t('owl_insight')}
-            </h3>
+            </h2>
             <div className="flex items-center gap-4 bg-twilight-cream/40 p-4 rounded-2xl border border-twilight-divider">
-              <p className="serif italic text-lg text-twilight-charcoal leading-relaxed flex-1">"{entry.aiInsights}"</p>
+              <p className="serif italic text-base text-twilight-charcoal leading-relaxed flex-1">"{entry.aiInsights}"</p>
             </div>
           </div>
           {(entry.todos?.length ?? 0) > 0 && (
             <div>
-              <h3 className="serif text-2xl font-bold text-twilight-charcoal flex items-center gap-2 mb-4">
-                <Bell className="text-twilight-amber" size={24} />
+              <h2 className="serif text-xl font-bold text-twilight-charcoal flex items-center gap-2 mb-4">
+                <Bell className="text-twilight-amber" size={20} />
                 {t('tasks_captured')}
-              </h3>
+              </h2>
               <div className="space-y-3">
                 {(entry.todos ?? []).map((todo, i) => (
                   <div key={i} className="flex items-center gap-4 bg-twilight-cream/40 p-4 rounded-2xl border border-twilight-divider">

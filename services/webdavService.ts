@@ -268,35 +268,91 @@ export class WebDAVService {
   }
 
   /**
-   * 从WebDAV恢复数据
+   * 列出云盘 Wing 目录下的备份文件（.zip、.json），按修改时间倒序
+   * 与本地导出一致：ZIP 为 data.json + images/，.json 为旧版格式
    */
-  async restoreData(fileName?: string): Promise<{ success: boolean; data?: any; message: string }> {
+  async listBackupFiles(): Promise<{ success: boolean; files?: { name: string; lastModified: number }[]; message: string }> {
     try {
-      // 如果没有指定文件名，尝试下载最新的备份
-if (!fileName) {
-            // 这里简化处理，实际应该列出文件并选择最新的
-            fileName = `wing-backup-${getLocalDateString()}.json`;
-          }
-
-      const result = await this.downloadFile(fileName);
-      
-      if (!result.success || !result.content) {
-        return {
-          success: false,
-          message: result.message
-        };
+      const dirUrl = this.getFullPath('');
+      const propfindXml = `<?xml version="1.0" encoding="utf-8"?><propfind xmlns="DAV:"><prop><getlastmodified/><resourcetype/></prop></propfind>`;
+      const res = await fetch(dirUrl, {
+        method: 'PROPFIND',
+        headers: {
+          'Authorization': this.getAuthHeader(),
+          'Depth': '1',
+          'Content-Type': 'application/xml; charset=utf-8',
+          ...this.getProxyHeaderIfNeeded(dirUrl)
+        },
+        body: propfindXml
+      });
+      if (res.status === 401 || res.status === 403) {
+        return { success: false, message: '认证失败，请检查用户名和密码' };
       }
-
-      const data = JSON.parse(result.content);
-      return {
-        success: true,
-        data,
-        message: '恢复成功'
-      };
-    } catch (error) {
+      if (res.status === 404) {
+        return { success: true, files: [], message: '' };
+      }
+      if (res.status !== 207 && (res.status < 200 || res.status >= 300)) {
+        return { success: false, message: `列表失败: HTTP ${res.status}` };
+      }
+      const text = await res.text();
+      const files: { name: string; lastModified: number }[] = [];
+      const blockRe = /<[a-z]:?response[^>]*>([\s\S]*?)<\/[a-z]:?response>/gi;
+      const hrefRe = /<[a-z]:?href>([^<]*)<\/[a-z]:?href>/i;
+      const modRe = /<[a-z]:?getlastmodified>([^<]*)<\/[a-z]:?getlastmodified>/i;
+      const collRe = /<[a-z]:?collection\s*\/>/i;
+      let m: RegExpExecArray | null;
+      while ((m = blockRe.exec(text)) !== null) {
+        const block = m[1];
+        const hrefM = hrefRe.exec(block);
+        const modM = modRe.exec(block);
+        if (collRe.test(block)) continue;
+        if (!hrefM) continue;
+        const href = decodeURIComponent(hrefM[1].replace(/^\s+|\s+$/g, ''));
+        const segments = href.split('/').filter(Boolean);
+        const name = segments[segments.length - 1] || '';
+        if (!name) continue;
+        if (!name.toLowerCase().endsWith('.zip') && !name.toLowerCase().endsWith('.json')) continue;
+        const lastModified = modM ? (Date.parse(modM[1].trim()) || 0) : 0;
+        files.push({ name, lastModified });
+      }
+      files.sort((a, b) => b.lastModified - a.lastModified);
+      return { success: true, files, message: '' };
+    } catch (e) {
       return {
         success: false,
-        message: `恢复失败: ${error instanceof Error ? error.message : '未知错误'}`
+        message: `列表失败: ${e instanceof Error ? e.message : '未知错误'}`
+      };
+    }
+  }
+
+  /**
+   * 从云盘下载备份文件，返回 File 供 dataService.replaceData/importData 使用
+   * 与本地导入一致：支持 .zip（data.json + images/）与 .json
+   */
+  async downloadBackupFile(fileName: string): Promise<{ success: boolean; file?: File; message: string }> {
+    try {
+      const url = this.getFullPath(fileName);
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: { 'Authorization': this.getAuthHeader(), ...this.getProxyHeaderIfNeeded(url) }
+      });
+      if (response.status === 404) return { success: false, message: '文件不存在' };
+      if (response.status < 200 || response.status >= 300) {
+        return { success: false, message: `下载失败: HTTP ${response.status}` };
+      }
+      const isZip = fileName.toLowerCase().endsWith('.zip');
+      if (isZip) {
+        const blob = await response.blob();
+        const file = new File([blob], fileName, { type: 'application/zip' });
+        return { success: true, file, message: '下载成功' };
+      }
+      const text = await response.text();
+      const file = new File([text], fileName, { type: 'application/json' });
+      return { success: true, file, message: '下载成功' };
+    } catch (e) {
+      return {
+        success: false,
+        message: `下载失败: ${e instanceof Error ? e.message : '未知错误'}`
       };
     }
   }
@@ -357,7 +413,7 @@ export const createWebDAVService = (settings: AppSettings): WebDAVService | null
 };
 
 /**
- * 若已开启「实时同步」且 WebDAV 已配置，则在后台执行一次备份；供记录、编辑等关键操作后调用
+ * 若已开启「自动备份到云盘」且 WebDAV 已配置，则在后台执行一次备份；供记录、编辑等关键操作后调用
  * @param settings 应用设置
  */
 export async function triggerRealtimeSyncIfEnabled(settings: AppSettings): Promise<void> {
@@ -369,7 +425,7 @@ export async function triggerRealtimeSyncIfEnabled(settings: AppSettings): Promi
     const sessions = MockDataService.getSessions();
     await svc.backupData(entries, sessions);
   } catch (e) {
-    console.warn('Realtime WebDAV sync failed:', e);
+    console.warn('Realtime WebDAV backup failed:', e);
   }
 }
 

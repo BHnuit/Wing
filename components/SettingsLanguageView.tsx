@@ -12,6 +12,7 @@ import { Language } from '../types';
 type ModelLang = 'zh' | 'en' | 'same';
 type Theme = 'system' | 'light' | 'dark';
 type PageFont = 'system' | 'source-han-sans' | 'source-han-serif' | 'xlwk';
+type FontSize = 'large' | 'medium' | 'small';
 
 const SettingsLanguageView: React.FC = () => {
   const navigate = useNavigate();
@@ -44,9 +45,15 @@ const SettingsLanguageView: React.FC = () => {
     setSettings((s) => ({ ...s, pageFont: v }));
   };
 
+  const handleFontSize = (v: FontSize) => {
+    MockDataService.updateSettings({ fontSize: v });
+    setSettings((s) => ({ ...s, fontSize: v }));
+  };
+
   const modelLang = (settings.modelLanguage ?? 'same') as ModelLang;
   const theme = (settings.theme ?? 'system') as Theme;
   const pageFont = (settings.pageFont ?? 'system') as PageFont;
+  const fontSize = (settings.fontSize ?? 'medium') as FontSize;
 
   return (
     <div className="p-6 space-y-6">
@@ -95,6 +102,25 @@ const SettingsLanguageView: React.FC = () => {
               {v === 'source-han-sans' && t('font_source_han_sans')}
               {v === 'source-han-serif' && t('font_source_han_serif')}
               {v === 'xlwk' && t('font_xlwk')}
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <section>
+        <h3 className="text-xs font-bold uppercase tracking-wider text-twilight-duskLight dark:text-nocturnal-secondary mb-3">{t('font_size_section')}</h3>
+        <div className="flex p-1 bg-twilight-cream/60 dark:bg-nocturnal-surface/60 rounded-2xl">
+          {(['large', 'medium', 'small'] as FontSize[]).map((v) => (
+            <button
+              key={v}
+              onClick={() => handleFontSize(v)}
+              className={`flex-1 py-2.5 rounded-xl text-sm font-medium ${
+                fontSize === v ? 'bg-twilight-surface dark:bg-nocturnal-surface shadow text-twilight-amber dark:text-nocturnal-accent' : 'text-twilight-duskLight dark:text-nocturnal-secondary'
+              }`}
+            >
+              {v === 'large' && t('font_size_large')}
+              {v === 'medium' && t('font_size_medium')}
+              {v === 'small' && t('font_size_small')}
             </button>
           ))}
         </div>

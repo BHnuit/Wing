@@ -27,6 +27,24 @@ function getDateList(n: number): string[] {
   return out;
 }
 
+/** 从 YYYY-MM-DD 解析出年月 */
+function getYearMonth(ymd: string): { year: number; month: number } {
+  const [y, m] = ymd.split('-').map(Number);
+  return { year: y, month: m };
+}
+
+/** 月份标签：1 月为「25年」「26年」等简短年份，其余为「X月」；英文 1 月为「25」「26」，其余为短月名 */
+function formatMonthLabel(year: number, month: number, lang: string): string {
+  if (month === 1) {
+    const shortYear = year % 100;
+    return lang.startsWith('zh') ? `${shortYear}年` : `${shortYear}`;
+  }
+  const months = lang.startsWith('zh')
+    ? ['', '1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月']
+    : ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  return months[month] || '';
+}
+
 const SettingsMainView: React.FC = () => {
   const [settings, setSettings] = useState(MockDataService.getSettings());
   const t = useTranslation(settings.language);
@@ -68,6 +86,18 @@ const SettingsMainView: React.FC = () => {
   }, []);
 
   const recordedDays = activitySet.size;
+  const gridWidth = nCols * (CELL_SIZE + GAP) - GAP;
+  const LABEL_ROW_H = 14;
+
+  /** 每一列应显示的月份标签：按「该月第一次出现的日期」所在列算，不要求 1 号在列顶 */
+  const labelForCol: Record<number, string> = {};
+  for (let i = 0; i < dateList.length; i++) {
+    const isNewMonth = i === 0 || dateList[i].substring(0, 7) !== dateList[i - 1].substring(0, 7);
+    if (!isNewMonth) continue;
+    const c = Math.floor(i / ROWS);
+    const { year, month } = getYearMonth(dateList[i]);
+    labelForCol[c] = formatMonthLabel(year, month, settings.language);
+  }
 
   return (
     <div className="p-6 space-y-6">
@@ -77,27 +107,48 @@ const SettingsMainView: React.FC = () => {
         <p className="text-sm font-medium text-twilight-warm dark:text-nocturnal-secondary">{t('stats_days_recorded')}</p>
         <div className="bg-twilight-cream dark:bg-nocturnal-surface rounded-2xl p-4 border border-twilight-divider dark:border-nocturnal-secondary/25 shadow-sm w-full">
           <div ref={calendarRef} className="w-full">
-            <div
-              className="grid"
-              style={{
-                gridTemplateColumns: `repeat(${nCols}, ${CELL_SIZE}px)`,
-                gridTemplateRows: `repeat(${ROWS}, ${CELL_SIZE}px)`,
-                gap: GAP
-              }}
-            >
-              {Array.from({ length: ROWS * nCols }, (_, i) => {
-                const ymd = i < dateList.length ? dateList[i] : '';
-                const active = ymd ? activitySet.has(ymd) : false;
-                return (
-                  <div
-                    key={i}
-                    className={`rounded-[1px] ${
-                      ymd ? (active ? 'bg-twilight-amber dark:bg-nocturnal-accent' : 'bg-twilight-dusk/15 dark:bg-nocturnal-secondary/30') : 'bg-transparent'
-                    }`}
-                    title={ymd}
-                  />
-                );
-              })}
+            <div className="overflow-x-auto w-full">
+              <div style={{ minWidth: gridWidth }}>
+              {/* 月份标签 + 热力图：同一 grid，第一行为月份，下 6 行为格子，竖列排布，保证标签与格子同宽同滚动 */}
+              <div
+                className="grid"
+                style={{
+                  gridTemplateColumns: `repeat(${nCols}, ${CELL_SIZE}px)`,
+                  gridTemplateRows: `${LABEL_ROW_H}px repeat(${ROWS}, ${CELL_SIZE}px)`,
+                  gridAutoFlow: 'column',
+                  gap: GAP
+                }}
+              >
+                {Array.from({ length: nCols * (1 + ROWS) }, (_, i) => {
+                  const c = Math.floor(i / (1 + ROWS));
+                  const rowInCol = i % (1 + ROWS);
+                  if (rowInCol === 0) {
+                    const label = labelForCol[c];
+                    if (!label) return <div key={`L-${c}`} />;
+                    return (
+                      <div key={`L-${c}`} className="flex items-center overflow-visible" style={{ minWidth: 0 }}>
+                        <span className="text-[10px] text-twilight-duskLight dark:text-nocturnal-secondary whitespace-nowrap">
+                          {label}
+                        </span>
+                      </div>
+                    );
+                  }
+                  const r = rowInCol - 1;
+                  const idx = c * ROWS + r;
+                  const ymd = idx < dateList.length ? dateList[idx] : '';
+                  const active = ymd ? activitySet.has(ymd) : false;
+                  return (
+                    <div
+                      key={`H-${c}-${r}`}
+                      className={`rounded-[1px] ${
+                        ymd ? (active ? 'bg-twilight-amber dark:bg-nocturnal-accent' : 'bg-twilight-dusk/15 dark:bg-nocturnal-secondary/30') : 'bg-transparent'
+                      }`}
+                      title={ymd}
+                    />
+                  );
+                })}
+              </div>
+            </div>
             </div>
           </div>
           <p className="text-[10px] text-twilight-duskLight dark:text-nocturnal-secondary mt-2">{recordedDays} {t('stats_days_unit')}</p>

@@ -66,6 +66,8 @@ export interface DailySession {
   finalEntryId?: string;
   /** 当天每次触发收拢的时间戳，用于展示「HH:mm 开始收拢羽毛」；再次生成则追加 */
   gatherStartedAt?: number[];
+  /** 每次收拢完成记录，用于按时间叠加展示「已生成《xx》」；再次生成覆盖同一日记时追加 */
+  gatherCompletions?: { completedAt: number; entryId: string; title: string }[];
 }
 
 export interface AppSettings {
@@ -89,13 +91,15 @@ export interface AppSettings {
   theme?: 'system' | 'light' | 'dark';
   /** 页面字体：system 系统默认、source-han-sans 思源黑体、source-han-serif 思源宋体、xlwk 霞鹜文楷 */
   pageFont?: 'system' | 'source-han-sans' | 'source-han-serif' | 'xlwk';
+  /** 全站字号：large 大、medium 中、small 小，未设置时视为 medium */
+  fontSize?: 'large' | 'medium' | 'small';
   /** 模型返回内容的语言：zh / en / same（与页面一致） */
   modelLanguage?: 'zh' | 'en' | 'same';
   /** 手动编辑日记时是否写入编辑历史，以便恢复旧版本 */
   keepEditHistory?: boolean;
   /** 开启后，在记录、编辑等关键操作后自动同步到 WebDAV（需已配置并可连接） */
   realtimeWebdavSync?: boolean;
-  /** 导出时是否同时备份密钥（各供应商 API Key、云端备份 WebDAV 设置），默认开启 */
+  /** 导出时是否备份所有设置（模型配置、云端备份等密钥信息），默认开启；关闭时仅导出日记与记录 */
   backupApiKeys?: boolean;
   /** 文风：letter 书信体、prose 散文体、report 报告体、custom 自定义 */
   writingStyle?: WritingStyle;

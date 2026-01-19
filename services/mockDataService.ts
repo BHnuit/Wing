@@ -1,16 +1,13 @@
-import { DailySession, RawFragment, WingEntry, SessionStatus, FragmentType, AppSettings, Language } from '../types';
+/**
+ * 数据服务模块（IndexedDB 存储）
+ * 提供 entries、sessions、settings 的读写，底层为 IndexedDB，突破 localStorage 5–10MB 限制，容纳更多图片。
+ * 保持 getEntries、saveEntry、getSessionByDate、updateFragment 等 API 不变，上层无感迁移。
+ */
+
+import { DailySession, RawFragment, WingEntry, SessionStatus, FragmentType, AppSettings } from '../types';
 import { getLocalDateString } from '../utils/date';
-import { isQuotaExceededError } from '../utils/storage';
+import { IndexedDBStorage } from './indexedDBStorage';
 import { getWelcomeEntry } from './welcomeEntry';
-
-const STORAGE_KEYS = {
-  SESSIONS: 'wing_sessions',
-  ENTRIES: 'wing_entries',
-  SETTINGS: 'wing_settings'
-};
-
-/** 是否已执行过「空数据时注入欢迎日记」的标记；仅首次为空时注入，用户删除后不再补回 */
-const WING_INITIALIZED_KEY = 'wing_initialized';
 
 const DEFAULT_SETTINGS: AppSettings = {
   apiKey: '',
@@ -34,9 +31,14 @@ const DEFAULT_SETTINGS: AppSettings = {
 };
 
 export const MockDataService = {
+  /**
+   * 初始化 IndexedDB 存储（打开 DB、迁移 localStorage、加载到内存）。必须在应用启动时 await 完成后再使用其它方法。
+   */
+  init: (): Promise<void> => IndexedDBStorage.init(),
+
   getSettings: (): AppSettings => {
-    const data = localStorage.getItem(STORAGE_KEYS.SETTINGS);
-    const parsed = data ? JSON.parse(data) : {};
+    const raw = IndexedDBStorage.getSettings();
+    const parsed = raw || {};
     // 迁移：旧数据仅有 apiKey 时，写入 apiKeys[当前供应商]
     if (parsed.apiKey != null && parsed.apiKey !== '' && !parsed.apiKeys) {
       const p = parsed.aiProvider || 'gemini';
@@ -54,20 +56,17 @@ export const MockDataService = {
   updateSettings: (settings: Partial<AppSettings>) => {
     const current = MockDataService.getSettings();
     const updated = { ...current, ...settings };
-    localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(updated));
+    IndexedDBStorage.putSettings(updated);
     window.dispatchEvent(new Event('wing_settings_updated'));
   },
 
-  getSessions: (): DailySession[] => {
-    const data = localStorage.getItem(STORAGE_KEYS.SESSIONS);
-    return data ? JSON.parse(data) : [];
-  },
+  getSessions: (): DailySession[] => IndexedDBStorage.getSessions(),
 
   getCurrentSession: (): DailySession => {
     const sessions = MockDataService.getSessions();
     const today = getLocalDateString();
-    let session = sessions.find(s => s.date === today);
-    
+    let session = sessions.find((s) => s.date === today);
+
     if (!session) {
       session = {
         id: crypto.randomUUID(),
@@ -81,32 +80,20 @@ export const MockDataService = {
   },
 
   /**
-   * 保存会话到 localStorage。
-   * 若因存储配额超限（QuotaExceededError）失败，则抛出带 code='QUOTA_EXCEEDED' 的 Error，供上层显示「存储空间不足」提示。
+   * 保存会话到 IndexedDB（内存 + 异步持久化）
    */
   saveSession: (session: DailySession) => {
-    const sessions = MockDataService.getSessions();
-    const index = sessions.findIndex(s => s.id === session.id);
-    if (index > -1) {
-      sessions[index] = session;
-    } else {
-      sessions.push(session);
-    }
-    try {
-      localStorage.setItem(STORAGE_KEYS.SESSIONS, JSON.stringify(sessions));
-    } catch (e) {
-      if (isQuotaExceededError(e)) {
-        const err = new Error('Storage quota exceeded');
-        (err as { code?: string }).code = 'QUOTA_EXCEEDED';
-        throw err;
-      }
-      throw e;
-    }
+    IndexedDBStorage.putSession(session);
   },
 
-  addFragment: (sessionId: string, content: string, type: FragmentType = FragmentType.TEXT, imageData?: string) => {
+  addFragment: (
+    sessionId: string,
+    content: string,
+    type: FragmentType = FragmentType.TEXT,
+    imageData?: string
+  ): RawFragment | null => {
     const sessions = MockDataService.getSessions();
-    const session = sessions.find(s => s.id === sessionId);
+    const session = sessions.find((s) => s.id === sessionId);
     if (session) {
       const fragment: RawFragment = {
         id: crypto.randomUUID(),
@@ -131,9 +118,9 @@ export const MockDataService = {
    */
   updateFragment: (sessionId: string, fragmentId: string, content: string): RawFragment | null => {
     const sessions = MockDataService.getSessions();
-    const session = sessions.find(s => s.id === sessionId);
+    const session = sessions.find((s) => s.id === sessionId);
     if (!session) return null;
-    const frag = session.fragments.find(f => f.id === fragmentId);
+    const frag = session.fragments.find((f) => f.id === fragmentId);
     if (!frag) return null;
     frag.content = content;
     frag.editedAt = Date.now();
@@ -141,10 +128,11 @@ export const MockDataService = {
     return frag;
   },
 
+  /**
+   * 保存日记到 IndexedDB（内存 + 异步持久化）
+   */
   saveEntry: (entry: WingEntry) => {
-    const entries = MockDataService.getEntries();
-    entries.push(entry);
-    localStorage.setItem(STORAGE_KEYS.ENTRIES, JSON.stringify(entries));
+    IndexedDBStorage.addEntry(entry);
     window.dispatchEvent(new Event('wing_data_updated'));
   },
 
@@ -153,42 +141,33 @@ export const MockDataService = {
    * 用户删除欢迎日记后不再自动补回。
    */
   _ensureWelcomeEntryIfNeeded: (): void => {
-    if (localStorage.getItem(WING_INITIALIZED_KEY) === '1') return;
-    const raw = localStorage.getItem(STORAGE_KEYS.ENTRIES);
-    const arr: WingEntry[] = raw ? JSON.parse(raw) : [];
-    if (arr.length > 0) {
-      localStorage.setItem(WING_INITIALIZED_KEY, '1');
+    if (IndexedDBStorage.getInitialized()) return;
+    if (IndexedDBStorage.getEntries().length > 0) {
+      IndexedDBStorage.setInitialized(true);
       return;
     }
     const lang = MockDataService.getSettings().language;
     const welcome = getWelcomeEntry(lang);
-    localStorage.setItem(STORAGE_KEYS.ENTRIES, JSON.stringify([welcome]));
-    localStorage.setItem(WING_INITIALIZED_KEY, '1');
+    IndexedDBStorage.replaceEntries([welcome]).catch(() => {});
+    IndexedDBStorage.setInitialized(true);
     window.dispatchEvent(new Event('wing_data_updated'));
   },
 
   getEntries: (): WingEntry[] => {
     MockDataService._ensureWelcomeEntryIfNeeded();
-    const data = localStorage.getItem(STORAGE_KEYS.ENTRIES);
-    return data ? JSON.parse(data) : [];
+    return IndexedDBStorage.getEntries();
   },
 
-  getEntryById: (id: string): WingEntry | undefined => {
-    return MockDataService.getEntries().find(e => e.id === id);
-  },
+  getEntryById: (id: string): WingEntry | undefined => MockDataService.getEntries().find((e) => e.id === id),
 
   /**
    * 按日期 (YYYY-MM-DD) 获取当日会话
-   * @param date 日期字符串
-   * @returns 当日会话，不存在则 undefined
    */
-  getSessionByDate: (date: string): DailySession | undefined => {
-    return MockDataService.getSessions().find(s => s.date === date);
-  },
+  getSessionByDate: (date: string): DailySession | undefined =>
+    MockDataService.getSessions().find((s) => s.date === date),
 
   /**
    * 按日期获取会话，不存在则创建并保存（用于在选定日期新增记录时）
-   * @param date YYYY-MM-DD
    */
   getOrCreateSessionByDate: (date: string): DailySession => {
     const existing = MockDataService.getSessionByDate(date);
@@ -205,56 +184,50 @@ export const MockDataService = {
 
   /**
    * 更新已有日记（部分字段，保留 id）
-   * @param id 日记 id
-   * @param updates 要更新的字段
    */
   updateEntry: (id: string, updates: Partial<WingEntry>) => {
     const entries = MockDataService.getEntries();
-    const index = entries.findIndex(e => e.id === id);
+    const index = entries.findIndex((e) => e.id === id);
     if (index === -1) return;
     const next = { ...entries[index], ...updates, id: entries[index].id };
-    entries[index] = next;
-    localStorage.setItem(STORAGE_KEYS.ENTRIES, JSON.stringify(entries));
+    IndexedDBStorage.updateEntryInPlace(next);
     window.dispatchEvent(new Event('wing_data_updated'));
   },
 
   /**
    * 删除日记，并清理引用该日记的 session.finalEntryId
-   * @param id 日记 id
    */
   deleteEntry: (id: string) => {
-    const entries = MockDataService.getEntries().filter(e => e.id !== id);
-    localStorage.setItem(STORAGE_KEYS.ENTRIES, JSON.stringify(entries));
-
+    IndexedDBStorage.deleteEntry(id);
     const sessions = MockDataService.getSessions();
     let changed = false;
-    sessions.forEach(s => {
+    sessions.forEach((s) => {
       if (s.finalEntryId === id) {
         s.finalEntryId = undefined;
         changed = true;
       }
     });
     if (changed) {
-      localStorage.setItem(STORAGE_KEYS.SESSIONS, JSON.stringify(sessions));
+      sessions.forEach((s) => IndexedDBStorage.putSession(s));
     }
-
     window.dispatchEvent(new Event('wing_data_updated'));
   },
 
   /**
+   * 替换全部 entries（供 dataService 导入/替换使用）。可 await 以捕获 QuotaExceeded。
+   */
+  replaceEntries: (entries: WingEntry[]): Promise<void> => IndexedDBStorage.replaceEntries(entries),
+
+  /**
+   * 替换全部 sessions（供 dataService 导入/替换使用）。可 await 以捕获 QuotaExceeded。
+   */
+  replaceSessions: (sessions: DailySession[]): Promise<void> => IndexedDBStorage.replaceSessions(sessions),
+
+  /**
    * 清除本地数据并刷新页面；同时清空云端备份设置（WebDAV）、各供应商 API Key，重置「已初始化」标记，使下次加载时重新注入欢迎日记。
    */
-  clearData: () => {
-    MockDataService.updateSettings({
-      apiKey: '',
-      apiKeys: {},
-      webdavUrl: '',
-      webdavUser: '',
-      webdavPass: ''
-    });
-    localStorage.removeItem(STORAGE_KEYS.SESSIONS);
-    localStorage.removeItem(STORAGE_KEYS.ENTRIES);
-    localStorage.removeItem(WING_INITIALIZED_KEY);
+  clearData: async (): Promise<void> => {
+    await IndexedDBStorage.clearAll();
     window.location.reload();
   },
 
@@ -274,8 +247,6 @@ export const MockDataService = {
 
   /**
    * 有会话记录（至少一个 fragment）的日期列表，用于记录页日期选择器。
-   * 仅在这些日期间切换，空白日期不包含；若「今天」暂无记录也会加入，以便可切回今日新增。
-   * @returns 按 YYYY-MM-DD 升序排列的日期数组
    */
   getDatesWithRecordsForPicker: (): string[] => {
     const set = new Set<string>();
@@ -287,7 +258,6 @@ export const MockDataService = {
     return Array.from(set).sort();
   },
 
-  /** 当天碎片中文本总字数（羽毛数） */
   getTodayFeatherCount: (): number => {
     const today = getLocalDateString();
     const s = MockDataService.getSessionByDate(today);
@@ -295,18 +265,15 @@ export const MockDataService = {
     return s.fragments.reduce((n, f) => n + (f.content?.length || 0), 0);
   },
 
-  /** 当天发送消息数（挥动翅膀次数） */
   getTodayMessageCount: (): number => {
     const today = getLocalDateString();
     const s = MockDataService.getSessionByDate(today);
     return s?.fragments?.length ?? 0;
   },
 
-  /** 全部碎片的文本总字数（羽毛总数） */
-  getTotalFeatherCount: (): number => {
-    return MockDataService.getSessions().reduce(
+  getTotalFeatherCount: (): number =>
+    MockDataService.getSessions().reduce(
       (n, s) => n + (s.fragments || []).reduce((m, f) => m + (f.content?.length || 0), 0),
       0
-    );
-  }
+    )
 };

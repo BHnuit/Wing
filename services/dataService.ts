@@ -6,24 +6,44 @@
  */
 
 import JSZip from 'jszip';
-import { WingEntry, DailySession, RawFragment, AiProvider, FragmentType } from '../types';
+import { WingEntry, DailySession, RawFragment, AiProvider, FragmentType, AppSettings } from '../types';
 import { getLocalDateString } from '../utils/date';
 import { isQuotaExceededError } from '../utils/storage';
 import { MockDataService } from './mockDataService';
+
+/** 「备份所有设置」时导出的设置选项与开关（不含 apiKeys、webdav、aiModels、aiBaseUrl） */
+export type ExportSettings = Partial<
+  Pick<
+    AppSettings,
+    | 'aiProvider'
+    | 'language'
+    | 'theme'
+    | 'pageFont'
+    | 'modelLanguage'
+    | 'keepEditHistory'
+    | 'realtimeWebdavSync'
+    | 'backupApiKeys'
+    | 'writingStyle'
+    | 'writingStylePrompt'
+    | 'insightPrompt'
+  >
+>;
 
 export interface ExportData {
   entries: WingEntry[];
   sessions: DailySession[];
   version: string;
   timestamp: number;
-  /** 各供应商的 API Key（仅当设置「同时备份密钥」时包含） */
+  /** 各供应商的 API Key（仅当「备份所有设置」开启时包含） */
   apiKeys?: Partial<Record<AiProvider, string>>;
-  /** 云端备份 WebDAV 设置（仅当设置「同时备份密钥」时包含） */
+  /** 云端备份 WebDAV 设置（仅当「备份所有设置」开启时包含） */
   webdav?: { webdavUrl: string; webdavUser: string; webdavPass: string };
-  /** 各供应商的模型名称（仅当设置「同时备份密钥」时包含） */
+  /** 各供应商的模型名称（仅当「备份所有设置」开启时包含） */
   aiModels?: Partial<Record<AiProvider, string>>;
-  /** 自定义 Base URL（仅当设置「同时备份密钥」时包含） */
+  /** 自定义 Base URL（仅当「备份所有设置」开启时包含） */
   aiBaseUrl?: string;
+  /** 设置中的选项与开关（仅当「备份所有设置」开启时包含） */
+  settings?: ExportSettings;
 }
 
 const IMAGES_FOLDER = 'images';
@@ -61,8 +81,27 @@ function getBase64FromDataUrl(dataUrl: string): string {
 }
 
 /**
+ * 从 AppSettings 提取「备份所有设置」时导出的选项与开关（不含密钥类字段）
+ */
+function getExportSettings(s: AppSettings): ExportSettings | undefined {
+  const o: ExportSettings = {};
+  if (s.aiProvider !== undefined) o.aiProvider = s.aiProvider;
+  if (s.language !== undefined) o.language = s.language;
+  if (s.theme !== undefined) o.theme = s.theme;
+  if (s.pageFont !== undefined) o.pageFont = s.pageFont;
+  if (s.modelLanguage !== undefined) o.modelLanguage = s.modelLanguage;
+  if (s.keepEditHistory !== undefined) o.keepEditHistory = s.keepEditHistory;
+  if (s.realtimeWebdavSync !== undefined) o.realtimeWebdavSync = s.realtimeWebdavSync;
+  if (s.backupApiKeys !== undefined) o.backupApiKeys = s.backupApiKeys;
+  if (s.writingStyle !== undefined) o.writingStyle = s.writingStyle;
+  if (s.writingStylePrompt !== undefined) o.writingStylePrompt = s.writingStylePrompt;
+  if (s.insightPrompt !== undefined) o.insightPrompt = s.insightPrompt;
+  return Object.keys(o).length > 0 ? o : undefined;
+}
+
+/**
  * 导出所有数据为 JSON 字符串（含内联 base64，供 WebDAV 等旧式备份使用）
- * 若开启「同时备份密钥」则包含 apiKeys 与 webdav 设置
+ * 若「备份所有设置」开启则包含 apiKeys、webdav、aiModels、aiBaseUrl 及 settings（各选项与开关）
  */
 export const exportData = (): string => {
   const entries = MockDataService.getEntries();
@@ -85,6 +124,8 @@ export const exportData = (): string => {
     };
     out.aiModels = settings.aiModels || {};
     out.aiBaseUrl = settings.aiBaseUrl ?? '';
+    const s = getExportSettings(settings);
+    if (s) out.settings = s;
   }
 
   return JSON.stringify(out, null, 2);
@@ -94,6 +135,7 @@ export const exportData = (): string => {
  * 构建与本地导出一致的备份 ZIP（data.json 文本 + images/ 图片），供下载或云端同步使用
  * - data.json：entries 用 imageRefs（路径），sessions 的 fragments 用 imageRef（路径），无 base64
  * - images/：entry_{entryId}_{fragmentId}.{ext}、frag_{sessionId}_{fragmentId}.{ext}
+ * - 若「备份所有设置」开启，data.json 还会包含 apiKeys、webdav、aiModels、aiBaseUrl、settings；否则仅日记与记录
  * @param entries 日记条目
  * @param sessions 日会话
  * @returns ZIP 的 Blob
@@ -152,6 +194,8 @@ export async function buildBackupZip(entries: WingEntry[], sessions: DailySessio
     };
     dataJson.aiModels = settings.aiModels || {};
     dataJson.aiBaseUrl = settings.aiBaseUrl ?? '';
+    const s = getExportSettings(settings);
+    if (s) dataJson.settings = s;
   }
 
   zip.file('data.json', JSON.stringify(dataJson, null, 2));
@@ -192,6 +236,7 @@ async function resolveDataFromZip(zip: JSZip): Promise<{ data: ExportData | null
     webdav?: { webdavUrl: string; webdavUser: string; webdavPass: string };
     aiModels?: Partial<Record<AiProvider, string>>;
     aiBaseUrl?: string;
+    settings?: ExportSettings;
   };
   if (!parsed.entries || !Array.isArray(parsed.entries) || !parsed.sessions || !Array.isArray(parsed.sessions)) {
     return { data: null, message: '无效的数据格式' };
@@ -246,7 +291,8 @@ async function resolveDataFromZip(zip: JSZip): Promise<{ data: ExportData | null
     apiKeys: parsed.apiKeys,
     webdav: parsed.webdav,
     aiModels: parsed.aiModels,
-    aiBaseUrl: parsed.aiBaseUrl
+    aiBaseUrl: parsed.aiBaseUrl,
+    settings: parsed.settings
   };
   return { data, message: '' };
 }
@@ -283,7 +329,9 @@ export const importData = (file: File): Promise<{ success: boolean; message: str
           resolve({ success: false, message: '无效的数据格式' });
           return;
         }
-        resolve(applyImportMerge(data));
+        applyImportMerge(data).then(resolve).catch((err) =>
+          resolve({ success: false, message: `导入失败: ${err instanceof Error ? err.message : '未知错误'}` })
+        );
       } catch (error) {
         resolve({ success: false, message: `导入失败: ${error instanceof Error ? error.message : '未知错误'}` });
       }
@@ -294,9 +342,9 @@ export const importData = (file: File): Promise<{ success: boolean; message: str
 };
 
 /**
- * 合并导入的数据到现有数据（entries / sessions 按 id 去重，只加新的）
+ * 合并导入的数据到现有数据（entries / sessions 按 id 去重，只加新的），写入 IndexedDB
  */
-function applyImportMerge(data: ExportData): { success: boolean; message: string } {
+async function applyImportMerge(data: ExportData): Promise<{ success: boolean; message: string }> {
   const existingEntries = MockDataService.getEntries();
   const existingSessions = MockDataService.getSessions();
   const entryMap = new Map(existingEntries.map((e) => [e.id, e]));
@@ -308,8 +356,8 @@ function applyImportMerge(data: ExportData): { success: boolean; message: string
     if (!sessionMap.has(session.id)) sessionMap.set(session.id, session);
   });
   try {
-    localStorage.setItem('wing_entries', JSON.stringify(Array.from(entryMap.values())));
-    localStorage.setItem('wing_sessions', JSON.stringify(Array.from(sessionMap.values())));
+    await MockDataService.replaceEntries(Array.from(entryMap.values()));
+    await MockDataService.replaceSessions(Array.from(sessionMap.values()));
   } catch (e) {
     if (isQuotaExceededError(e)) {
       return { success: false, message: '存储空间不足，无法完成导入。请先清空部分数据或导出备份后重试。' };
@@ -318,6 +366,9 @@ function applyImportMerge(data: ExportData): { success: boolean; message: string
   }
 
   const cur = MockDataService.getSettings();
+  if (data.settings != null && typeof data.settings === 'object') {
+    MockDataService.updateSettings(data.settings);
+  }
   if (data.apiKeys != null && typeof data.apiKeys === 'object') {
     MockDataService.updateSettings({ apiKeys: { ...(cur.apiKeys || {}), ...data.apiKeys } });
   }
@@ -369,7 +420,9 @@ export const replaceData = (file: File): Promise<{ success: boolean; message: st
           resolve({ success: false, message: '无效的数据格式' });
           return;
         }
-        resolve(applyReplace(data));
+        applyReplace(data).then(resolve).catch((err) =>
+          resolve({ success: false, message: `替换失败: ${err instanceof Error ? err.message : '未知错误'}` })
+        );
       } catch (error) {
         resolve({ success: false, message: `替换失败: ${error instanceof Error ? error.message : '未知错误'}` });
       }
@@ -380,17 +433,20 @@ export const replaceData = (file: File): Promise<{ success: boolean; message: st
 }
 
 /**
- * 用导入的数据完全替换本地 entries 与 sessions
+ * 用导入的数据完全替换本地 entries 与 sessions，写入 IndexedDB
  */
-function applyReplace(data: ExportData): { success: boolean; message: string } {
+async function applyReplace(data: ExportData): Promise<{ success: boolean; message: string }> {
   try {
-    localStorage.setItem('wing_entries', JSON.stringify(data.entries));
-    localStorage.setItem('wing_sessions', JSON.stringify(data.sessions));
+    await MockDataService.replaceEntries(data.entries);
+    await MockDataService.replaceSessions(data.sessions);
   } catch (e) {
     if (isQuotaExceededError(e)) {
       return { success: false, message: '存储空间不足，无法完成替换。请先清空部分数据或导出备份后重试。' };
     }
     throw e;
+  }
+  if (data.settings != null && typeof data.settings === 'object') {
+    MockDataService.updateSettings(data.settings);
   }
   if (data.apiKeys != null && typeof data.apiKeys === 'object') {
     MockDataService.updateSettings({ apiKeys: data.apiKeys });

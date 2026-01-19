@@ -4,7 +4,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Cloud, Download, Upload, RefreshCw, CheckCircle2, XCircle, Loader2, Trash2 } from 'lucide-react';
+import { ArrowLeft, Cloud, Download, Upload, Replace, RefreshCw, CheckCircle2, XCircle, Loader2, Trash2, Eye, EyeOff } from 'lucide-react';
 import { MockDataService } from '../services/mockDataService';
 import { createWebDAVService } from '../services/webdavService';
 import { downloadData, importData, replaceData } from '../services/dataService';
@@ -18,6 +18,13 @@ const SettingsStorageView: React.FC = () => {
   const t = useTranslation(settings.language);
   const [syncStatus, setSyncStatus] = useState<{ type: 'idle' | 'testing' | 'syncing' | 'success' | 'error'; message?: string }>({ type: 'idle' });
   const [showClearModal, setShowClearModal] = useState(false);
+  const [showRestoreModal, setShowRestoreModal] = useState(false);
+  const [restoreMode, setRestoreMode] = useState<'import' | 'replace'>('import');
+  const [restoreFiles, setRestoreFiles] = useState<{ name: string; lastModified: number }[]>([]);
+  const [restoreSelected, setRestoreSelected] = useState('');
+  const [restoreLoading, setRestoreLoading] = useState(false);
+  /** 是否明文显示 WebDAV 密码，默认打码 */
+  const [showWebdavPass, setShowWebdavPass] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const replaceFileInputRef = useRef<HTMLInputElement>(null);
 
@@ -68,8 +75,9 @@ const SettingsStorageView: React.FC = () => {
     setTimeout(() => setSyncStatus({ type: 'idle' }), 3000);
   };
 
-  const handleSync = async () => {
-    setSyncStatus({ type: 'syncing', message: t('webdav_syncing') });
+  /** 备份到云盘：与本地导出一致，ZIP（data.json + images/）上传 */
+  const handleBackup = async () => {
+    setSyncStatus({ type: 'syncing', message: t('webdav_backuping') });
     const svc = createWebDAVService(settings);
     if (!svc) {
       setSyncStatus({ type: 'error', message: '请先填写 WebDAV 配置' });
@@ -79,8 +87,55 @@ const SettingsStorageView: React.FC = () => {
     const entries = MockDataService.getEntries();
     const sessions = MockDataService.getSessions();
     const r = await svc.backupData(entries, sessions);
+    setSyncStatus({ type: r.success ? 'success' : 'error', message: r.success ? t('webdav_backup_success') : r.message });
+    setTimeout(() => setSyncStatus({ type: 'idle' }), 3000);
+  };
+
+  /** 打开从云盘导入/替换弹窗：先拉取备份列表；mode 决定后续走 importData 或 replaceData */
+  const handleRestoreOpen = async (mode: 'import' | 'replace') => {
+    const svc = createWebDAVService(settings);
+    if (!svc) {
+      showToast('请先填写 WebDAV 配置', 'error');
+      return;
+    }
+    setRestoreMode(mode);
+    setRestoreLoading(true);
+    setShowRestoreModal(true);
+    setRestoreFiles([]);
+    setRestoreSelected('');
+    const r = await svc.listBackupFiles();
+    setRestoreLoading(false);
+    if (!r.success || !r.files?.length) {
+      showToast(r.success ? t('webdav_no_backup') : r.message, 'error');
+      setShowRestoreModal(false);
+      return;
+    }
+    setRestoreFiles(r.files);
+    setRestoreSelected(r.files[0].name);
+  };
+
+  /** 从云盘导入或替换：下载所选备份后走 importData（合并）或 replaceData（覆盖），与本地逻辑一致 */
+  const handleRestoreConfirm = async () => {
+    if (!restoreSelected) return;
+    const confirmMsg = restoreMode === 'replace' ? t('confirm_replace') : t('webdav_import_confirm');
+    if (!window.confirm(confirmMsg)) return;
+    const svc = createWebDAVService(settings);
+    if (!svc) {
+      showToast('请先填写 WebDAV 配置', 'error');
+      return;
+    }
+    setSyncStatus({ type: 'syncing', message: restoreMode === 'import' ? t('webdav_importing') : t('webdav_replacing') });
+    setShowRestoreModal(false);
+    const down = await svc.downloadBackupFile(restoreSelected);
+    if (!down.success || !down.file) {
+      setSyncStatus({ type: 'error', message: down.message });
+      setTimeout(() => setSyncStatus({ type: 'idle' }), 3000);
+      return;
+    }
+    const r = restoreMode === 'import' ? await importData(down.file) : await replaceData(down.file);
     setSyncStatus({ type: r.success ? 'success' : 'error', message: r.message });
     setTimeout(() => setSyncStatus({ type: 'idle' }), 3000);
+    if (r.success) setTimeout(() => window.location.reload(), 1500);
   };
 
   const handleExport = async () => {
@@ -181,33 +236,63 @@ const SettingsStorageView: React.FC = () => {
             </div>
             <div className="space-y-2">
               <label className="text-sm font-medium text-twilight-warm dark:text-nocturnal-secondary">Password</label>
-              <input
-                type="password"
-                value={settings.webdavPass}
-                onChange={(e) => handleWebDAVChange('webdavPass', e.target.value)}
-                placeholder={t('webdav_password_placeholder')}
-                className="w-full bg-twilight-cream/50 dark:bg-nocturnal-bg/70 dark:text-nocturnal-primary border border-twilight-divider dark:border-nocturnal-secondary/25 rounded-2xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-twilight-amber/30 dark:focus:ring-nocturnal-accent/40 placeholder:dark:text-nocturnal-secondary"
-              />
+              <div className="relative">
+                <input
+                  type={showWebdavPass ? 'text' : 'password'}
+                  value={settings.webdavPass}
+                  onChange={(e) => handleWebDAVChange('webdavPass', e.target.value)}
+                  placeholder={t('webdav_password_placeholder')}
+                  className="w-full bg-twilight-cream/50 dark:bg-nocturnal-bg/70 dark:text-nocturnal-primary border border-twilight-divider dark:border-nocturnal-secondary/25 rounded-2xl px-4 py-3 pr-12 focus:outline-none focus:ring-2 focus:ring-twilight-amber/30 dark:focus:ring-nocturnal-accent/40 placeholder:dark:text-nocturnal-secondary"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowWebdavPass((s) => !s)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 p-1 rounded-lg text-twilight-duskLight dark:text-nocturnal-secondary hover:bg-twilight-dusk/10 dark:hover:bg-nocturnal-surface"
+                  aria-label={showWebdavPass ? t('secret_hide') : t('secret_show')}
+                >
+                  {showWebdavPass ? <EyeOff size={18} /> : <Eye size={18} />}
+                </button>
+              </div>
             </div>
           </div>
           <p className="text-[10px] text-twilight-duskLight dark:text-nocturnal-secondary">{t('webdav_help')}</p>
-          <div className="flex gap-3">
-            <button
-              onClick={handleTestConnection}
-              disabled={syncStatus.type === 'testing' || syncStatus.type === 'syncing'}
-              className="flex-1 flex items-center justify-center gap-2 bg-twilight-cream/60 dark:bg-nocturnal-bg/60 text-twilight-charcoal dark:text-nocturnal-primary px-4 py-2 rounded-xl font-medium hover:bg-twilight-dusk/10 dark:hover:bg-nocturnal-surface disabled:opacity-50 border border-twilight-divider dark:border-nocturnal-secondary/25"
-            >
-              {syncStatus.type === 'testing' ? <Loader2 className="animate-spin" size={16} /> : <RefreshCw size={16} />}
-              {t('webdav_test')}
-            </button>
-            <button
-              onClick={handleSync}
-              disabled={syncStatus.type === 'testing' || syncStatus.type === 'syncing'}
-              className="flex-1 flex items-center justify-center gap-2 bg-twilight-amber dark:bg-nocturnal-accent text-twilight-charcoal dark:text-white px-4 py-2 rounded-xl font-medium hover:bg-twilight-amberMuted dark:hover:bg-nocturnal-accent/90 disabled:opacity-50"
-            >
-              {syncStatus.type === 'syncing' ? <Loader2 className="animate-spin" size={16} /> : <Cloud size={16} />}
-              {t('webdav_sync')}
-            </button>
+          <div className="flex flex-col gap-3">
+            <div className="flex gap-3">
+              <button
+                onClick={handleTestConnection}
+                disabled={syncStatus.type === 'testing' || syncStatus.type === 'syncing'}
+                className="flex-1 flex items-center justify-center gap-2 bg-twilight-cream/60 dark:bg-nocturnal-bg/60 text-twilight-charcoal dark:text-nocturnal-primary px-4 py-2 rounded-xl font-medium hover:bg-twilight-dusk/10 dark:hover:bg-nocturnal-surface disabled:opacity-50 border border-twilight-divider dark:border-nocturnal-secondary/25"
+              >
+                {syncStatus.type === 'testing' ? <Loader2 className="animate-spin" size={16} /> : <RefreshCw size={16} />}
+                {t('webdav_test')}
+              </button>
+              <button
+                onClick={handleBackup}
+                disabled={syncStatus.type === 'testing' || syncStatus.type === 'syncing'}
+                className="flex-1 flex items-center justify-center gap-2 bg-twilight-amber dark:bg-nocturnal-accent text-twilight-charcoal dark:text-white px-4 py-2 rounded-xl font-medium hover:bg-twilight-amberMuted dark:hover:bg-nocturnal-accent/90 disabled:opacity-50"
+              >
+                {syncStatus.type === 'syncing' ? <Loader2 className="animate-spin" size={16} /> : <Cloud size={16} />}
+                {t('webdav_backup')}
+              </button>
+            </div>
+            <div className="flex gap-3">
+              <button
+                onClick={() => handleRestoreOpen('import')}
+                disabled={syncStatus.type === 'testing' || syncStatus.type === 'syncing'}
+                className="flex-1 flex items-center justify-center gap-2 bg-twilight-cream/60 dark:bg-nocturnal-bg/60 text-twilight-charcoal dark:text-nocturnal-primary px-4 py-2 rounded-xl font-medium hover:bg-twilight-dusk/10 dark:hover:bg-nocturnal-surface disabled:opacity-50 border border-twilight-divider dark:border-nocturnal-secondary/25"
+              >
+                <Upload size={16} />
+                {t('webdav_import')}
+              </button>
+              <button
+                onClick={() => handleRestoreOpen('replace')}
+                disabled={syncStatus.type === 'testing' || syncStatus.type === 'syncing'}
+                className="flex-1 flex items-center justify-center gap-2 bg-twilight-cream/60 dark:bg-nocturnal-bg/60 text-twilight-charcoal dark:text-nocturnal-primary px-4 py-2 rounded-xl font-medium hover:bg-twilight-dusk/10 dark:hover:bg-nocturnal-surface disabled:opacity-50 border border-twilight-divider dark:border-nocturnal-secondary/25"
+              >
+                <Replace size={16} />
+                {t('webdav_replace')}
+              </button>
+            </div>
           </div>
           {syncStatus.type !== 'idle' && (
             <div
@@ -247,7 +332,7 @@ const SettingsStorageView: React.FC = () => {
             onClick={handleReplace}
             className="w-full flex items-center justify-center gap-2 bg-twilight-amberMuted dark:bg-nocturnal-surface text-twilight-charcoal dark:text-nocturnal-primary px-4 py-3 rounded-xl font-medium hover:bg-twilight-amber/80 dark:hover:bg-nocturnal-secondary/30 border border-transparent dark:border-nocturnal-secondary/20"
           >
-            <Upload size={18} />
+            <Replace size={18} />
             {t('replace_data')}
           </button>
           <div className="pt-2 border-t border-twilight-divider dark:border-nocturnal-secondary/25">
@@ -271,12 +356,15 @@ const SettingsStorageView: React.FC = () => {
               <div className="flex-shrink-0 w-10 h-10 rounded-full bg-rose-50 dark:bg-rose-900/40 flex items-center justify-center">
                 <Trash2 size={20} className="text-rose-600 dark:text-rose-400" />
               </div>
-              <h3 className="serif text-xl font-bold text-twilight-charcoal dark:text-nocturnal-primary">{t('clear_modal_title')}</h3>
+              <h3 className="serif text-xl font-semibold text-twilight-charcoal dark:text-nocturnal-primary">{t('clear_modal_title')}</h3>
             </div>
             <p className="text-twilight-warm dark:text-nocturnal-secondary text-sm mb-4">{t('clear_modal_confirm')}</p>
             <div className="flex flex-col gap-2">
               <button
-                onClick={() => { setShowClearModal(false); MockDataService.clearData(); }}
+                onClick={async () => {
+                  setShowClearModal(false);
+                  await MockDataService.clearData();
+                }}
                 className="w-full py-3 px-4 bg-rose-600 text-white rounded-xl font-medium hover:bg-rose-700 transition-colors"
               >
                 {t('clear_modal_confirm_btn')}
@@ -288,6 +376,54 @@ const SettingsStorageView: React.FC = () => {
                 {t('cancel')}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {showRestoreModal && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/20" onClick={() => setShowRestoreModal(false)}>
+          <div
+            className="bg-twilight-cream dark:bg-nocturnal-surface rounded-2xl p-6 max-w-sm w-full mx-4 shadow-xl border border-twilight-divider dark:border-nocturnal-secondary/20"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="serif text-xl font-semibold text-twilight-charcoal dark:text-nocturnal-primary mb-3">{t('webdav_select_backup')}</h3>
+            {restoreLoading ? (
+              <div className="flex items-center justify-center gap-2 py-8 text-twilight-duskLight dark:text-nocturnal-secondary">
+                <Loader2 className="animate-spin" size={20} />
+                <span>{t('webdav_loading_list')}</span>
+              </div>
+            ) : (
+              <>
+                <select
+                  value={restoreSelected}
+                  onChange={(e) => setRestoreSelected(e.target.value)}
+                  className="w-full bg-twilight-cream/50 dark:bg-nocturnal-bg/70 dark:text-nocturnal-primary border border-twilight-divider dark:border-nocturnal-secondary/25 rounded-xl px-4 py-3 mb-4 focus:outline-none focus:ring-2 focus:ring-twilight-amber/30 dark:focus:ring-nocturnal-accent/40"
+                >
+                  {restoreFiles.map((f) => (
+                    <option key={f.name} value={f.name}>
+                      {f.name} ({new Date(f.lastModified).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' })})
+                    </option>
+                  ))}
+                </select>
+                <p className="text-[11px] text-twilight-duskLight dark:text-nocturnal-secondary mb-4">
+                  {restoreMode === 'replace' ? t('confirm_replace') : t('webdav_import_confirm')}
+                </p>
+                <div className="flex flex-col gap-2">
+                  <button
+                    onClick={handleRestoreConfirm}
+                    className="w-full py-3 px-4 bg-twilight-amber dark:bg-nocturnal-accent text-twilight-charcoal dark:text-white rounded-xl font-medium hover:bg-twilight-amberMuted dark:hover:bg-nocturnal-accent/90"
+                  >
+                    {restoreMode === 'replace' ? t('webdav_replace') : t('webdav_import')}
+                  </button>
+                  <button
+                    onClick={() => setShowRestoreModal(false)}
+                    className="w-full py-2 text-twilight-duskLight dark:text-nocturnal-secondary text-sm hover:text-twilight-warm dark:hover:text-nocturnal-primary"
+                  >
+                    {t('cancel')}
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}

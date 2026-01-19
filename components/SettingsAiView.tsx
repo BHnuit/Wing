@@ -5,7 +5,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Key, RefreshCw, CheckCircle2, XCircle, Loader2 } from 'lucide-react';
+import { ArrowLeft, RefreshCw, CheckCircle2, XCircle, Loader2, Eye, EyeOff } from 'lucide-react';
 import { MockDataService } from '../services/mockDataService';
 import { AiService } from '../services/aiService';
 import { WRITING_STYLE_PRESETS } from '../services/geminiService';
@@ -25,6 +25,8 @@ const SettingsAiView: React.FC = () => {
   const t = useTranslation(settings.language);
   const [aiTestStatus, setAiTestStatus] = useState<{ type: 'idle' | 'testing' | 'success' | 'error'; message?: string }>({ type: 'idle' });
   const [modelSelectOther, setModelSelectOther] = useState(false);
+  /** 是否明文显示 API Key，默认打码 */
+  const [showApiKey, setShowApiKey] = useState(false);
 
   useEffect(() => {
     const h = () => setSettings(MockDataService.getSettings());
@@ -131,13 +133,20 @@ const SettingsAiView: React.FC = () => {
           <label className="text-sm font-medium text-twilight-warm dark:text-nocturnal-secondary">API Key</label>
           <div className="relative">
             <input
-              type="password"
+              type={showApiKey ? 'text' : 'password'}
               value={currentApiKey()}
               onChange={(e) => handleApiKeyChange(e.target.value)}
               placeholder="Paste your key here..."
               className="w-full bg-twilight-cream/50 dark:bg-nocturnal-bg/70 dark:text-nocturnal-primary border border-twilight-divider dark:border-nocturnal-secondary/25 rounded-2xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-twilight-amber/30 dark:focus:ring-nocturnal-accent/40 pr-12 placeholder:dark:text-nocturnal-secondary"
             />
-            <Key className="absolute right-4 top-1/2 -translate-y-1/2 text-twilight-duskLight dark:text-nocturnal-secondary" size={18} />
+            <button
+              type="button"
+              onClick={() => setShowApiKey((s) => !s)}
+              className="absolute right-3 top-1/2 -translate-y-1/2 p-1 rounded-lg text-twilight-duskLight dark:text-nocturnal-secondary hover:bg-twilight-dusk/10 dark:hover:bg-nocturnal-surface"
+              aria-label={showApiKey ? t('secret_hide') : t('secret_show')}
+            >
+              {showApiKey ? <EyeOff size={18} /> : <Eye size={18} />}
+            </button>
           </div>
         </div>
 
@@ -271,7 +280,7 @@ const SettingsAiView: React.FC = () => {
             readOnly={(settings.writingStyle || 'prose') !== 'custom'}
             rows={3}
             placeholder={(settings.writingStyle || 'prose') === 'custom' ? t('writing_style_prompt_placeholder') : ''}
-            className="w-full bg-twilight-cream/50 dark:bg-nocturnal-bg/70 dark:text-nocturnal-primary border border-twilight-divider dark:border-nocturnal-secondary/25 rounded-2xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-twilight-amber/30 dark:focus:ring-nocturnal-accent/40 placeholder:dark:text-nocturnal-secondary resize-y"
+            className="w-full text-sm bg-twilight-cream/50 dark:bg-nocturnal-bg/70 dark:text-nocturnal-primary border border-twilight-divider dark:border-nocturnal-secondary/25 rounded-2xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-twilight-amber/30 dark:focus:ring-nocturnal-accent/40 placeholder:dark:text-nocturnal-secondary resize-y"
           />
         </div>
         </div>
@@ -288,7 +297,7 @@ const SettingsAiView: React.FC = () => {
               onChange={(e) => handleInsightPromptChange(e.target.value)}
               rows={3}
               placeholder={t('insight_prompt_placeholder')}
-              className="w-full bg-twilight-cream/50 dark:bg-nocturnal-bg/70 dark:text-nocturnal-primary border border-twilight-divider dark:border-nocturnal-secondary/25 rounded-2xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-twilight-amber/30 dark:focus:ring-nocturnal-accent/40 placeholder:dark:text-nocturnal-secondary resize-y"
+              className="w-full text-sm bg-twilight-cream/50 dark:bg-nocturnal-bg/70 dark:text-nocturnal-primary border border-twilight-divider dark:border-nocturnal-secondary/25 rounded-2xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-twilight-amber/30 dark:focus:ring-nocturnal-accent/40 placeholder:dark:text-nocturnal-secondary resize-y"
             />
           </div>
         </div>

@@ -4,7 +4,7 @@
  */
 
 import { AppSettings, AiProvider, RawFragment, WingEntry, Language, FragmentType } from '../types';
-import { GeminiService, GeminiAPIError, getSystemInstructionForSynthesis, buildInsightUserContent } from './geminiService';
+import { GeminiService, GeminiAPIError, getSystemInstructionForSynthesis, buildInsightUserContent, safeFragmentContentForPrompt } from './geminiService';
 
 /** 统一 AI 调用错误，与 GeminiAPIError 兼容（含 code） */
 export class AiAPIError extends Error {
@@ -97,12 +97,13 @@ async function openAICompatibleSynthesize(
 
   const inputContext = fragments
     .sort((a, b) => a.timestamp - b.timestamp)
-    .map((f) => `[${new Date(f.timestamp).toLocaleTimeString()}] ${f.type === FragmentType.IMAGE ? '[Image]' : ''} ${f.content}`)
+    .map((f) => `[${new Date(f.timestamp).toLocaleTimeString()}] ${f.type === FragmentType.IMAGE ? '[Image]' : ''} ${safeFragmentContentForPrompt(f)}`)
     .join('\n');
 
   let fullInput = `这是用户今天的记录：\n\n${inputContext}`;
   if (previousGeneration?.trim()) {
-    fullInput += `\n\n[已生成的日记正文，供重新生成时参考]\n${previousGeneration}\n\n【重新生成】content_markdown 必须为**重新撰写**的正文：请对上述原文进行重写、润色或合并当日新记录，**禁止逐字照抄原文**，输出的正文须在表述、结构或详略上与原文有可见差异。todos：从当日记录或上述正文中提取待办，若无则填 []。`;
+    const pg = previousGeneration.length > 30000 ? previousGeneration.slice(0, 30000) + '\n\n...(正文过长已截断)' : previousGeneration;
+    fullInput += `\n\n[已生成的日记正文，供重新生成时参考]\n${pg}\n\n【重新生成】content_markdown 必须为**重新撰写**的正文：请对上述原文进行重写、润色或合并当日新记录，**禁止逐字照抄原文**，输出的正文须在表述、结构或详略上与原文有可见差异。todos：从当日记录或上述正文中提取待办，若无则填 []。`;
   }
 
   const body = {
@@ -201,12 +202,13 @@ async function* openAICompatibleSynthesizeStream(
 
   const inputContext = fragments
     .sort((a, b) => a.timestamp - b.timestamp)
-    .map((f) => `[${new Date(f.timestamp).toLocaleTimeString()}] ${f.type === FragmentType.IMAGE ? '[Image]' : ''} ${f.content}`)
+    .map((f) => `[${new Date(f.timestamp).toLocaleTimeString()}] ${f.type === FragmentType.IMAGE ? '[Image]' : ''} ${safeFragmentContentForPrompt(f)}`)
     .join('\n');
 
   let fullInput = `这是用户今天的记录：\n\n${inputContext}`;
   if (previousGeneration?.trim()) {
-    fullInput += `\n\n[已生成的日记正文，供重新生成时参考]\n${previousGeneration}\n\n【重新生成】content_markdown 必须为**重新撰写**的正文：请对上述原文进行重写、润色或合并当日新记录，**禁止逐字照抄原文**，输出的正文须在表述、结构或详略上与原文有可见差异。todos：从当日记录或上述正文中提取待办，若无则填 []。`;
+    const pg = previousGeneration.length > 30000 ? previousGeneration.slice(0, 30000) + '\n\n...(正文过长已截断)' : previousGeneration;
+    fullInput += `\n\n[已生成的日记正文，供重新生成时参考]\n${pg}\n\n【重新生成】content_markdown 必须为**重新撰写**的正文：请对上述原文进行重写、润色或合并当日新记录，**禁止逐字照抄原文**，输出的正文须在表述、结构或详略上与原文有可见差异。todos：从当日记录或上述正文中提取待办，若无则填 []。`;
   }
 
   const body = {
@@ -407,6 +409,8 @@ export const AiService = {
     const useStream = opts?.stream !== false;
 
     if (USE_AI_PROXY) {
+      /** 代理请求体剔除 imageData，避免 base64 图片导致 payload 超限（Vercel ~4.5MB、Netlify ~6MB），合成逻辑仅用 id/content/timestamp/type/editedAt；图片由前端在生成后写入 entry.images */
+      const fragmentsForProxy = fragments.map(({ imageData, ...f }) => f);
       const res = await fetch(AI_PROXY_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -418,7 +422,7 @@ export const AiService = {
           baseUrl: provider === 'custom' ? (settings.aiBaseUrl || '').trim() : undefined,
           model: getModel(settings),
           lang,
-          fragments,
+          fragments: fragmentsForProxy,
           previousGeneration,
           writingStyle: settings.writingStyle,
           writingStylePrompt: settings.writingStylePrompt,

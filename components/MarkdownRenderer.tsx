@@ -72,24 +72,39 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content, ent
         remarkPlugins={[remarkGfm]}
         components={{
           p: ({ children }) => (
-            <p className="text-twilight-warm dark:text-nocturnal-primary leading-relaxed text-lg mb-6 last:mb-0">
+            <p className="text-twilight-warm dark:text-nocturnal-primary leading-relaxed text-base mb-6 last:mb-0">
               {children}
             </p>
           ),
           h1: ({ children }) => (
-            <h1 className="serif text-3xl font-bold text-twilight-charcoal dark:text-nocturnal-primary mt-8 mb-4 first:mt-0">
+            <h1 className="serif text-2xl font-bold text-twilight-charcoal dark:text-nocturnal-primary mt-8 mb-4 first:mt-0">
               {children}
             </h1>
           ),
           h2: ({ children }) => (
-            <h2 className="serif text-2xl font-bold text-twilight-charcoal dark:text-nocturnal-primary mt-6 mb-3">
+            <h2 className="serif text-lg font-bold text-twilight-charcoal dark:text-nocturnal-primary mt-6 mb-3">
               {children}
             </h2>
           ),
           h3: ({ children }) => (
-            <h3 className="serif text-xl font-semibold text-twilight-charcoal dark:text-nocturnal-primary mt-4 mb-2">
+            <h3 className="serif text-base font-semibold text-twilight-charcoal dark:text-nocturnal-primary mt-4 mb-2">
               {children}
             </h3>
+          ),
+          h4: ({ children }) => (
+            <h4 className="serif text-sm font-semibold text-twilight-charcoal dark:text-nocturnal-primary mt-4 mb-2">
+              {children}
+            </h4>
+          ),
+          h5: ({ children }) => (
+            <h5 className="serif text-xs font-medium text-twilight-charcoal dark:text-nocturnal-primary mt-3 mb-1">
+              {children}
+            </h5>
+          ),
+          h6: ({ children }) => (
+            <h6 className="serif text-[11px] font-medium text-twilight-charcoal dark:text-nocturnal-primary mt-3 mb-1">
+              {children}
+            </h6>
           ),
           ul: ({ children }) => (
             <ul className="list-disc list-inside mb-6 space-y-2 text-twilight-warm dark:text-nocturnal-primary">
