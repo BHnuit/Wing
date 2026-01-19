@@ -1,6 +1,6 @@
-
 import { DailySession, RawFragment, WingEntry, SessionStatus, FragmentType, AppSettings, Language } from '../types';
 import { getLocalDateString } from '../utils/date';
+import { isQuotaExceededError } from '../utils/storage';
 import { getWelcomeEntry } from './welcomeEntry';
 
 const STORAGE_KEYS = {
@@ -23,10 +23,14 @@ const DEFAULT_SETTINGS: AppSettings = {
   webdavPass: '',
   language: 'zh',
   theme: 'system',
+  pageFont: 'system',
   modelLanguage: 'same',
   keepEditHistory: false,
   realtimeWebdavSync: false,
-  backupApiKeys: true
+  backupApiKeys: true,
+  writingStyle: 'prose',
+  writingStylePrompt: '',
+  insightPrompt: ''
 };
 
 export const MockDataService = {
@@ -76,6 +80,10 @@ export const MockDataService = {
     return session;
   },
 
+  /**
+   * 保存会话到 localStorage。
+   * 若因存储配额超限（QuotaExceededError）失败，则抛出带 code='QUOTA_EXCEEDED' 的 Error，供上层显示「存储空间不足」提示。
+   */
   saveSession: (session: DailySession) => {
     const sessions = MockDataService.getSessions();
     const index = sessions.findIndex(s => s.id === session.id);
@@ -84,7 +92,16 @@ export const MockDataService = {
     } else {
       sessions.push(session);
     }
-    localStorage.setItem(STORAGE_KEYS.SESSIONS, JSON.stringify(sessions));
+    try {
+      localStorage.setItem(STORAGE_KEYS.SESSIONS, JSON.stringify(sessions));
+    } catch (e) {
+      if (isQuotaExceededError(e)) {
+        const err = new Error('Storage quota exceeded');
+        (err as { code?: string }).code = 'QUOTA_EXCEEDED';
+        throw err;
+      }
+      throw e;
+    }
   },
 
   addFragment: (sessionId: string, content: string, type: FragmentType = FragmentType.TEXT, imageData?: string) => {

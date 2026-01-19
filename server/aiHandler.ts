@@ -5,7 +5,7 @@
 
 import { AiService } from '../services/aiService';
 import { parseSynthesisResult } from '../services/geminiService';
-import type { AppSettings, AiProvider, RawFragment, Language, WingEntry } from '../types';
+import type { AppSettings, AiProvider, RawFragment, Language, WingEntry, WritingStyle } from '../types';
 
 /** 构建代理用的最小 AppSettings */
 function buildSettings(p: {
@@ -14,8 +14,11 @@ function buildSettings(p: {
   baseUrl?: string;
   model?: string;
   language?: Language;
+  writingStyle?: WritingStyle;
+  writingStylePrompt?: string;
+  insightPrompt?: string;
 }): AppSettings {
-  const { provider, apiKey, baseUrl, model, language } = p;
+  const { provider, apiKey, baseUrl, model, language, writingStyle, writingStylePrompt, insightPrompt } = p;
   return {
     aiProvider: provider,
     apiKeys: { [provider]: apiKey },
@@ -27,6 +30,9 @@ function buildSettings(p: {
     webdavUrl: '',
     webdavUser: '',
     webdavPass: '',
+    writingStyle,
+    writingStylePrompt,
+    insightPrompt
   } as AppSettings;
 }
 
@@ -44,8 +50,12 @@ export interface AiProxyBody {
   /** synthesize */
   fragments?: RawFragment[];
   previousGeneration?: string;
+  /** 文风与自定义提示词（synthesize 时生效） */
+  writingStyle?: WritingStyle;
+  writingStylePrompt?: string;
   /** regenerateInsight */
   entry?: { title?: string; mood?: string; summary?: string; markdownContent?: string };
+  insightPrompt?: string;
 }
 
 export interface AiProxyResult {
@@ -71,8 +81,8 @@ export async function* handleSynthesizeStream(body: AiProxyBody): AsyncGenerator
     yield { type: 'error', error: 'synthesize 需要 fragments 数组', code: 'INVALID_BODY' };
     return;
   }
-  const { fragments, previousGeneration, lang = 'zh', provider, apiKey, baseUrl, model } = body;
-  const settings = buildSettings({ provider, apiKey, baseUrl, model, language: lang });
+  const { fragments, previousGeneration, lang = 'zh', provider, apiKey, baseUrl, model, writingStyle, writingStylePrompt, insightPrompt } = body;
+  const settings = buildSettings({ provider, apiKey, baseUrl, model, language: lang, writingStyle, writingStylePrompt, insightPrompt });
   let full = '';
   try {
     for await (const c of AiService.synthesizeJournalStream(
@@ -114,8 +124,8 @@ export async function handleAiRequest(body: AiProxyBody): Promise<AiProxyResult>
     return { status: 400, error: '缺少 action 或 body 格式错误' };
   }
 
-  const { action, provider, apiKey, baseUrl, model, lang = 'zh' } = body;
-  const settings = buildSettings({ provider, apiKey, baseUrl, model, language: lang });
+  const { action, provider, apiKey, baseUrl, model, lang = 'zh', writingStyle, writingStylePrompt, insightPrompt } = body;
+  const settings = buildSettings({ provider, apiKey, baseUrl, model, language: lang, writingStyle, writingStylePrompt, insightPrompt });
 
   try {
     switch (action) {

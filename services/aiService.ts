@@ -4,7 +4,7 @@
  */
 
 import { AppSettings, AiProvider, RawFragment, WingEntry, Language, FragmentType } from '../types';
-import { GeminiService, GeminiAPIError, getSystemInstructionForSynthesis } from './geminiService';
+import { GeminiService, GeminiAPIError, getSystemInstructionForSynthesis, buildInsightUserContent } from './geminiService';
 
 /** 统一 AI 调用错误，与 GeminiAPIError 兼容（含 code） */
 export class AiAPIError extends Error {
@@ -89,7 +89,10 @@ async function openAICompatibleSynthesize(
   if (!model) throw new AiAPIError('请填写模型名称', 'MISSING_MODEL');
 
   const url = `${base}/v1/chat/completions`;
-  const sys = getSystemInstructionForSynthesis(lang) +
+  const sys = getSystemInstructionForSynthesis(lang, {
+    writingStyle: settings.writingStyle,
+    writingStylePrompt: settings.writingStylePrompt
+  }) +
     '\n\nOutput ONLY a valid JSON object. No markdown, no extra text. Required keys: title, mood, summary, content_markdown, todos (array of {title, priority}). priority is one of: high, medium, low.';
 
   const inputContext = fragments
@@ -190,7 +193,10 @@ async function* openAICompatibleSynthesizeStream(
   if (!model) throw new AiAPIError('请填写模型名称', 'MISSING_MODEL');
 
   const url = `${base}/v1/chat/completions`;
-  const sys = getSystemInstructionForSynthesis(lang) +
+  const sys = getSystemInstructionForSynthesis(lang, {
+    writingStyle: settings.writingStyle,
+    writingStylePrompt: settings.writingStylePrompt
+  }) +
     '\n\nOutput ONLY a valid JSON object. No markdown, no extra text. Required keys: title, mood, summary, content_markdown, todos (array of {title, priority}). priority is one of: high, medium, low.';
 
   const inputContext = fragments
@@ -298,13 +304,7 @@ async function openAICompatibleRegenerateInsight(
   const model = getModel(settings);
   if (!model) throw new AiAPIError('请填写模型名称', 'MISSING_MODEL');
 
-  const langLabel = lang === 'zh' ? '简体中文' : 'English';
-  const user = `根据以下日记，仅输出一段心理学视角的深度分析与鼓励（约 50–100 字），使用${langLabel}。不要加引号、标题或前后缀，只输出正文。
-
-标题：${entry.title || '（无）'}
-心情：${entry.mood || '（无）'}
-概括：${entry.summary || '（无）'}
-正文：\n${entry.markdownContent || '（无）'}`;
+  const user = buildInsightUserContent(entry, lang, settings.insightPrompt);
 
   const res = await fetch(`${base}/v1/chat/completions`, {
     method: 'POST',
@@ -362,7 +362,9 @@ export const AiService = {
           getEffectiveApiKey(settings),
           retries,
           previousGeneration,
-          getModel(settings)
+          getModel(settings),
+          settings.writingStyle,
+          settings.writingStylePrompt
         );
       } catch (e) {
         if (e instanceof GeminiAPIError) throw new AiAPIError(e.message, e.code, e.statusCode);
@@ -417,7 +419,10 @@ export const AiService = {
           model: getModel(settings),
           lang,
           fragments,
-          previousGeneration
+          previousGeneration,
+          writingStyle: settings.writingStyle,
+          writingStylePrompt: settings.writingStylePrompt,
+          insightPrompt: settings.insightPrompt
         })
       });
 
@@ -479,7 +484,9 @@ export const AiService = {
           getEffectiveApiKey(settings),
           retries,
           previousGeneration,
-          getModel(settings)
+          getModel(settings),
+          settings.writingStyle,
+          settings.writingStylePrompt
         );
       } catch (e) {
         if (e instanceof GeminiAPIError) {
@@ -539,7 +546,8 @@ export const AiService = {
           baseUrl: provider === 'custom' ? (settings.aiBaseUrl || '').trim() : undefined,
           model: getModel(settings),
           lang,
-          entry
+          entry,
+          insightPrompt: settings.insightPrompt
         })
       });
       const data = (await res.json().catch(() => ({}))) as { text?: string; error?: string; code?: string };
@@ -553,7 +561,8 @@ export const AiService = {
           entry,
           lang,
           getEffectiveApiKey(settings),
-          getModel(settings)
+          getModel(settings),
+          settings.insightPrompt
         );
       } catch (e) {
         if (e instanceof GeminiAPIError) {

@@ -1,6 +1,5 @@
-
 import { GoogleGenAI, Type } from "@google/genai";
-import { RawFragment, WingEntry, WingTodo, Language } from "../types";
+import { RawFragment, WingEntry, WingTodo, Language, WritingStyle } from "../types";
 
 /** 获取系统提示词（供 Gemini 与 OpenAI 兼容接口共用） */
 export const getSystemInstruction = (lang: Language) => `Role: 你是 Wing App 的智能内核，一位敏锐的传记作家和心理咨询师。
@@ -14,8 +13,34 @@ Output Requirement:
 3. 文笔需流畅、内省。如果原文包含图片，请在适当位置保留 [Image] 标记。
 4. 心理学视角的深度分析与鼓励（约 50-100 字）。`;
 
+/** 预设文风对应的提示词（仅文风段落，供合成系统提示与设置页展示） */
+export const WRITING_STYLE_PRESETS: Record<Exclude<WritingStyle, 'custom'>, string> = {
+  letter: '日记正文采用书信体文风：如同写给某人或未来的自己的信，可使用第二人称「你」或称呼语，语气亲切、私密，可有开头的称呼与结尾的落款感。',
+  prose: '日记正文采用散文体文风：行文自由、富有节奏感，可夹叙夹议，注重意境与情绪的自然流动，语言优美、留白适中。',
+  report: '日记正文采用报告体文风：条理清晰、层次分明，可适当使用小标题或分点，客观记述与简要点评结合，简洁克制。'
+};
+
+/**
+ * 根据文风与自定义内容获取文风相关的提示词段落
+ * @param writingStyle 文风
+ * @param customPrompt 自定义文风时的用户输入，仅当 writingStyle 为 custom 时使用
+ * @returns 可追加到系统提示的文风段落，若无则返回空字符串
+ */
+export function getWritingStylePrompt(writingStyle: WritingStyle | undefined, customPrompt?: string): string {
+  if (!writingStyle || writingStyle === 'custom') {
+    const t = (customPrompt || '').trim();
+    return t ? `\n\nWriting style (user-defined): ${t}` : '';
+  }
+  const p = WRITING_STYLE_PRESETS[writingStyle];
+  return p ? `\n\n${p}` : '';
+}
+
 /** 合成日记用：不包含「洞察」要求，洞察将另根据生成的日记正文单独生成 */
-export const getSystemInstructionForSynthesis = (lang: Language) => `Role: 你是 Wing App 的智能内核，一位敏锐的传记作家。
+export const getSystemInstructionForSynthesis = (
+  lang: Language,
+  opts?: { writingStyle?: WritingStyle; writingStylePrompt?: string }
+) => {
+  const base = `Role: 你是 Wing App 的智能内核，一位敏锐的传记作家。
 
 Task: 接收用户一天内的碎片化记录，将其重组为结构化数据。
 Language: Output MUST be in ${lang === 'zh' ? 'Simplified Chinese' : 'English'}.
@@ -25,6 +50,9 @@ Output Requirement:
 2. JSON 格式必须符合定义的 Schema。
 3. 文笔需流畅、内省。如果原文包含图片，须在 content_markdown 中保留 [Image] 标记，数量与输入一致。
 4. mood 必须为单个 emoji，**仅根据日记与记录内容**选取，禁止输出文字（如 happy、晴朗、calm）。`;
+  const style = getWritingStylePrompt(opts?.writingStyle, opts?.writingStylePrompt);
+  return base + style;
+};
 
 /** 合成日记用 Schema：不含 insights，洞察将根据生成的日记正文单独生成 */
 const WING_SYNTHESIS_SCHEMA = {
@@ -81,7 +109,10 @@ export const GeminiService = {
     retries: number = 2,
     previousGeneration?: string,
     /** 模型名称，留空使用默认 gemini-3-flash-preview */
-    model?: string
+    model?: string,
+    /** 文风及自定义提示词，用于系统提示 */
+    writingStyle?: WritingStyle,
+    writingStylePrompt?: string
   ): Promise<Partial<WingEntry>> {
     // 优先使用传入的 apiKey，否则尝试从环境变量读取（用于开发环境）
     const key = apiKey || process.env.API_KEY || process.env.GEMINI_API_KEY;
@@ -113,7 +144,7 @@ export const GeminiService = {
           model: model || 'gemini-3-flash-preview',
           contents: fullInput,
           config: {
-            systemInstruction: getSystemInstructionForSynthesis(lang),
+            systemInstruction: getSystemInstructionForSynthesis(lang, { writingStyle, writingStylePrompt }),
             responseMimeType: "application/json",
             responseSchema: WING_SYNTHESIS_SCHEMA
           }
@@ -174,7 +205,9 @@ export const GeminiService = {
     apiKey?: string,
     retries: number = 2,
     previousGeneration?: string,
-    model?: string
+    model?: string,
+    writingStyle?: WritingStyle,
+    writingStylePrompt?: string
   ): AsyncGenerator<string> {
     const key = apiKey || process.env.API_KEY || process.env.GEMINI_API_KEY;
     if (!key) {
@@ -203,7 +236,7 @@ export const GeminiService = {
           model: model || 'gemini-3-flash-preview',
           contents: fullInput,
           config: {
-            systemInstruction: getSystemInstructionForSynthesis(lang),
+            systemInstruction: getSystemInstructionForSynthesis(lang, { writingStyle, writingStylePrompt }),
             responseMimeType: "application/json",
             responseSchema: WING_SYNTHESIS_SCHEMA
           }
@@ -235,6 +268,7 @@ export const GeminiService = {
    * @param lang 语言
    * @param apiKey API 密钥
    * @param model 模型名，留空用默认
+   * @param insightPrompt 自定义洞察提示语，留空用默认
    * @returns 洞察纯文本
    * @throws GeminiAPIError
    */
@@ -242,20 +276,15 @@ export const GeminiService = {
     entry: Pick<WingEntry, 'title' | 'mood' | 'summary' | 'markdownContent'>,
     lang: Language = 'zh',
     apiKey?: string,
-    model?: string
+    model?: string,
+    insightPrompt?: string
   ): Promise<string> {
     const key = apiKey || process.env.API_KEY || process.env.GEMINI_API_KEY;
     if (!key) {
       throw new GeminiAPIError('API Key is missing. Please configure it in settings.', 'MISSING_API_KEY');
     }
 
-    const langLabel = lang === 'zh' ? '简体中文' : 'English';
-    const content = `根据以下日记，仅输出一段心理学视角的深度分析与鼓励（约 50–100 字），使用${langLabel}。不要加引号、标题或前后缀，只输出正文。
-
-标题：${entry.title || '（无）'}
-心情：${entry.mood || '（无）'}
-概括：${entry.summary || '（无）'}
-正文：\n${entry.markdownContent || '（无）'}`;
+    const content = buildInsightUserContent(entry, lang, insightPrompt);
 
     let lastError: Error | null = null;
     for (let attempt = 0; attempt <= 2; attempt++) {
@@ -283,6 +312,33 @@ export const GeminiService = {
     throw new GeminiAPIError(lastError?.message || 'Insight generation failed', 'UNKNOWN_ERROR');
   }
 };
+
+/** 猫头鹰洞察的默认指令（未设置自定义时使用） */
+const DEFAULT_INSIGHT_INSTRUCTION = (lang: Language) =>
+  `根据以下日记，仅输出一段心理学视角的深度分析与鼓励（约 50–100 字），使用${lang === 'zh' ? '简体中文' : 'English'}。不要加引号、标题或前后缀，只输出正文。`;
+
+/**
+ * 构建洞察生成所用的用户消息：指令 + 日记结构化内容
+ * @param entry 日记条目
+ * @param lang 语言
+ * @param insightPrompt 自定义提示语，留空则用默认
+ * @returns 完整的 user 消息文本
+ */
+export function buildInsightUserContent(
+  entry: Pick<WingEntry, 'title' | 'mood' | 'summary' | 'markdownContent'>,
+  lang: Language,
+  insightPrompt?: string
+): string {
+  const instruction = (insightPrompt && insightPrompt.trim())
+    ? insightPrompt.trim()
+    : DEFAULT_INSIGHT_INSTRUCTION(lang);
+  return `${instruction}
+
+标题：${entry.title || '（无）'}
+心情：${entry.mood || '（无）'}
+概括：${entry.summary || '（无）'}
+正文：\n${entry.markdownContent || '（无）'}`;
+}
 
 /** 解析合成结果 JSON 并做 [Image] 占位补全，返回 WingEntry 部分字段；供 geminiService 与 aiHandler 流式解析共用 */
 export function parseSynthesisResult(

@@ -15,6 +15,9 @@ export type Language = 'zh' | 'en';
 /** AI 供应商：Gemini、OpenAI、DeepSeek、自定义 Base URL */
 export type AiProvider = 'gemini' | 'openai' | 'deepseek' | 'custom';
 
+/** 文风：书信体、散文体、报告体、自定义 */
+export type WritingStyle = 'letter' | 'prose' | 'report' | 'custom';
+
 export interface RawFragment {
   id: string;
   content: string;
@@ -51,6 +54,8 @@ export interface WingEntry {
   editedAt?: number;
   /** 编辑历史（仅当设置「保留编辑历史」时写入），可恢复 */
   editHistory?: EditHistoryItem[];
+  /** 收拢生成完成时间，用于猫头鹰消息的时间标记 */
+  generatedAt?: number;
 }
 
 export interface DailySession {
@@ -59,6 +64,8 @@ export interface DailySession {
   status: SessionStatus;
   fragments: RawFragment[];
   finalEntryId?: string;
+  /** 当天每次触发收拢的时间戳，用于展示「HH:mm 开始收拢羽毛」；再次生成则追加 */
+  gatherStartedAt?: number[];
 }
 
 export interface AppSettings {
@@ -80,6 +87,8 @@ export interface AppSettings {
   language: Language;
   /** 页面主题：system 跟随系统、light 亮色、dark 暗色 */
   theme?: 'system' | 'light' | 'dark';
+  /** 页面字体：system 系统默认、source-han-sans 思源黑体、source-han-serif 思源宋体、xlwk 霞鹜文楷 */
+  pageFont?: 'system' | 'source-han-sans' | 'source-han-serif' | 'xlwk';
   /** 模型返回内容的语言：zh / en / same（与页面一致） */
   modelLanguage?: 'zh' | 'en' | 'same';
   /** 手动编辑日记时是否写入编辑历史，以便恢复旧版本 */
@@ -88,4 +97,10 @@ export interface AppSettings {
   realtimeWebdavSync?: boolean;
   /** 导出时是否同时备份密钥（各供应商 API Key、云端备份 WebDAV 设置），默认开启 */
   backupApiKeys?: boolean;
+  /** 文风：letter 书信体、prose 散文体、report 报告体、custom 自定义 */
+  writingStyle?: WritingStyle;
+  /** 自定义文风时的提示词，仅当 writingStyle 为 custom 时生效 */
+  writingStylePrompt?: string;
+  /** 猫头鹰洞察的自定义提示语，留空使用默认（心理学视角的深度分析与鼓励，约 50–100 字） */
+  insightPrompt?: string;
 }

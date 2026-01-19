@@ -1,14 +1,16 @@
 /**
- * 设置二级：模型配置（AI 模型、模型名称、API Key、自定义 Base、测试连接）
+ * 设置二级：模型配置
+ * 拆分为三个卡片：AI 选项、文风选项（文风偏好、对应提示词）、洞察选项（猫头鹰洞察提示语）
  */
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Shield, Key, RefreshCw, CheckCircle2, XCircle, Loader2 } from 'lucide-react';
+import { ArrowLeft, Key, RefreshCw, CheckCircle2, XCircle, Loader2 } from 'lucide-react';
 import { MockDataService } from '../services/mockDataService';
 import { AiService } from '../services/aiService';
+import { WRITING_STYLE_PRESETS } from '../services/geminiService';
 import { useTranslation } from '../i18n';
-import { AiProvider } from '../types';
+import { AiProvider, WritingStyle } from '../types';
 
 const MODEL_PRESETS: Partial<Record<AiProvider, string[]>> = {
   gemini: ['gemini-3-pro-preview', 'gemini-3-pro-image-preview', 'gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.5-flash-image-preview'],
@@ -65,6 +67,21 @@ const SettingsAiView: React.FC = () => {
     setSettings((s) => ({ ...s, aiModels: next }));
   };
 
+  const handleWritingStyleChange = (style: WritingStyle) => {
+    MockDataService.updateSettings({ writingStyle: style });
+    setSettings((s) => ({ ...s, writingStyle: style }));
+  };
+
+  const handleWritingStylePromptChange = (v: string) => {
+    MockDataService.updateSettings({ writingStylePrompt: v });
+    setSettings((s) => ({ ...s, writingStylePrompt: v }));
+  };
+
+  const handleInsightPromptChange = (v: string) => {
+    MockDataService.updateSettings({ insightPrompt: v });
+    setSettings((s) => ({ ...s, insightPrompt: v }));
+  };
+
   const handleAiTestConnection = async () => {
     setAiTestStatus({ type: 'testing', message: t('ai_testing') });
     const result = await AiService.testConnection(settings);
@@ -85,7 +102,10 @@ const SettingsAiView: React.FC = () => {
         <h2 className="serif text-2xl font-bold text-twilight-charcoal dark:text-nocturnal-primary">{t('menu_model_config')}</h2>
       </header>
 
-      <div className="bg-twilight-cream dark:bg-nocturnal-surface rounded-3xl p-6 border border-twilight-divider dark:border-nocturnal-secondary/25 shadow-sm space-y-4">
+      {/* AI 选项：小标题在上方，配置在卡片内 */}
+      <section>
+        <h3 className="text-xs font-bold uppercase tracking-wider text-twilight-duskLight dark:text-nocturnal-secondary mb-3">{t('card_ai_options')}</h3>
+        <div className="bg-twilight-cream dark:bg-nocturnal-surface rounded-3xl p-6 border border-twilight-divider dark:border-nocturnal-secondary/25 shadow-sm space-y-4">
         <div className="space-y-2">
           <label className="text-sm font-medium text-twilight-warm dark:text-nocturnal-secondary">{t('ai_provider')}</label>
           <div className="flex flex-wrap gap-2">
@@ -214,7 +234,65 @@ const SettingsAiView: React.FC = () => {
             <span className="text-sm">{aiTestStatus.message}</span>
           </div>
         )}
-      </div>
+        </div>
+      </section>
+
+      {/* 文风选项：小标题在上方，配置在卡片内 */}
+      <section>
+        <h3 className="text-xs font-bold uppercase tracking-wider text-twilight-duskLight dark:text-nocturnal-secondary mb-3">{t('card_writing_options')}</h3>
+        <div className="bg-twilight-cream dark:bg-nocturnal-surface rounded-3xl p-6 border border-twilight-divider dark:border-nocturnal-secondary/25 shadow-sm space-y-4">
+        <div className="space-y-2">
+          <label className="text-sm font-medium text-twilight-warm dark:text-nocturnal-secondary">{t('writing_style_preference')}</label>
+          <div className="flex flex-wrap gap-2">
+            {(['letter', 'prose', 'report', 'custom'] as WritingStyle[]).map((s) => (
+              <button
+                key={s}
+                onClick={() => handleWritingStyleChange(s)}
+                className={`px-4 py-2 rounded-xl text-sm font-medium ${
+                  (settings.writingStyle || 'prose') === s ? 'bg-twilight-charcoal dark:bg-nocturnal-accent text-twilight-amberMuted dark:text-nocturnal-bg' : 'bg-twilight-cream/60 dark:bg-nocturnal-bg/60 text-twilight-duskLight dark:text-nocturnal-secondary hover:bg-twilight-dusk/10 dark:hover:bg-nocturnal-surface'
+                }`}
+              >
+                {s === 'letter' && t('writing_style_letter')}
+                {s === 'prose' && t('writing_style_prose')}
+                {s === 'report' && t('writing_style_report')}
+                {s === 'custom' && t('writing_style_custom')}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="space-y-2">
+          <label className="text-sm font-medium text-twilight-warm dark:text-nocturnal-secondary">{t('writing_style_prompt_corresponding')}</label>
+          <p className="text-[10px] text-twilight-duskLight dark:text-nocturnal-secondary">{t('writing_style_prompt_hint')}</p>
+          <textarea
+            value={(settings.writingStyle || 'prose') === 'custom'
+              ? (settings.writingStylePrompt || '')
+              : (WRITING_STYLE_PRESETS[(settings.writingStyle || 'prose') as Exclude<WritingStyle, 'custom'>] || '')}
+            onChange={(e) => (settings.writingStyle || 'prose') === 'custom' && handleWritingStylePromptChange(e.target.value)}
+            readOnly={(settings.writingStyle || 'prose') !== 'custom'}
+            rows={3}
+            placeholder={(settings.writingStyle || 'prose') === 'custom' ? t('writing_style_prompt_placeholder') : ''}
+            className="w-full bg-twilight-cream/50 dark:bg-nocturnal-bg/70 dark:text-nocturnal-primary border border-twilight-divider dark:border-nocturnal-secondary/25 rounded-2xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-twilight-amber/30 dark:focus:ring-nocturnal-accent/40 placeholder:dark:text-nocturnal-secondary resize-y"
+          />
+        </div>
+        </div>
+      </section>
+
+      {/* 洞察选项：小标题在上方，配置在卡片内 */}
+      <section>
+        <h3 className="text-xs font-bold uppercase tracking-wider text-twilight-duskLight dark:text-nocturnal-secondary mb-3">{t('card_insight_options')}</h3>
+        <div className="bg-twilight-cream dark:bg-nocturnal-surface rounded-3xl p-6 border border-twilight-divider dark:border-nocturnal-secondary/25 shadow-sm space-y-4">
+          <div className="space-y-2">
+            <label className="text-sm font-medium text-twilight-warm dark:text-nocturnal-secondary">{t('insight_prompt_label')}</label>
+            <textarea
+              value={settings.insightPrompt || ''}
+              onChange={(e) => handleInsightPromptChange(e.target.value)}
+              rows={3}
+              placeholder={t('insight_prompt_placeholder')}
+              className="w-full bg-twilight-cream/50 dark:bg-nocturnal-bg/70 dark:text-nocturnal-primary border border-twilight-divider dark:border-nocturnal-secondary/25 rounded-2xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-twilight-amber/30 dark:focus:ring-nocturnal-accent/40 placeholder:dark:text-nocturnal-secondary resize-y"
+            />
+          </div>
+        </div>
+      </section>
     </div>
   );
 };

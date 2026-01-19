@@ -14,6 +14,20 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import { MockDataService } from './services/mockDataService';
 import { useTranslation } from './i18n';
 
+/** 根据页面字体设置返回对应的 font-family 值（正文与标题） */
+function getPageFontFamily(pageFont?: string): string {
+  switch (pageFont) {
+    case 'source-han-sans':
+      return '"Noto Sans SC", -apple-system, BlinkMacSystemFont, sans-serif';
+    case 'source-han-serif':
+      return '"Noto Serif SC", Georgia, serif';
+    case 'xlwk':
+      return '"LXGW WenKai", sans-serif';
+    default:
+      return 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif';
+  }
+}
+
 const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const location = useLocation();
   const [settings, setSettings] = useState(MockDataService.getSettings());
@@ -51,7 +65,11 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   }, [settings.theme]);
 
   return (
-    <div className="min-h-screen max-w-2xl mx-auto flex flex-col bg-twilight-bg dark:bg-nocturnal-bg relative border-x border-twilight-divider dark:border-nocturnal-secondary/25 shadow-sm overflow-hidden">
+    <div
+      className="min-h-screen max-w-2xl mx-auto flex flex-col bg-twilight-bg dark:bg-nocturnal-bg relative border-x border-twilight-divider dark:border-nocturnal-secondary/25 shadow-sm overflow-hidden"
+      data-page-font={settings.pageFont || 'system'}
+      style={{ fontFamily: getPageFontFamily(settings.pageFont) }}
+    >
       {/* Header */}
       {!isDetail && (
         <header className="sticky top-0 z-50 glass px-6 py-4 flex items-center justify-between">

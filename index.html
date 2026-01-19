@@ -4,8 +4,24 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Wing - AI Journal</title>
+    <title>Wing - AI日记</title>
     <link rel="icon" type="image/svg+xml" href="/OwlLogo.svg" />
+    <link rel="apple-touch-icon" href="/OwlLogo.svg" />
+
+    <!-- Open Graph：全站统一分享卡片（不含动态 meta） -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Wing" />
+    <meta property="og:title" content="Wing - AI日记" />
+    <meta property="og:description" content="像黄昏的猫头鹰一样整理碎片思绪" />
+    <meta property="og:image" content="/og-image.svg" />
+    <!-- 若 Facebook/LinkedIn 不展示 SVG，可把 og-image.svg 导出为 1200×630 的 og-image.png 并改为 content="/og-image.png" -->
+
+    <!-- Twitter Card：与 OG 一致 -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Wing - AI日记" />
+    <meta name="twitter:description" content="像黄昏的猫头鹰一样整理碎片思绪" />
+    <meta name="twitter:image" content="/og-image.svg" />
+    <meta name="twitter:image:alt" content="Wing - AI日记" />
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
       tailwind.config = {
@@ -41,6 +57,8 @@
       }
     </script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Playfair+Display:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&family=Noto+Serif+SC:wght@400;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/lxgw-wenkai-webfont@1.7.0/style.css">
     <style>
         body {
             font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -53,6 +71,12 @@
         }
         .serif {
             font-family: 'Playfair Display', Georgia, serif;
+        }
+        /* 思源黑体 / 思源宋体 / 霞鹜文楷 时，标题继承 Layout 字体，与正文一致 */
+        [data-page-font="source-han-sans"] .serif,
+        [data-page-font="source-han-serif"] .serif,
+        [data-page-font="xlwk"] .serif {
+            font-family: inherit;
         }
         .glass {
             background: rgba(242, 239, 229, 0.92);

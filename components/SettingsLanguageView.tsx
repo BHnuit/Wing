@@ -11,6 +11,7 @@ import { Language } from '../types';
 
 type ModelLang = 'zh' | 'en' | 'same';
 type Theme = 'system' | 'light' | 'dark';
+type PageFont = 'system' | 'source-han-sans' | 'source-han-serif' | 'xlwk';
 
 const SettingsLanguageView: React.FC = () => {
   const navigate = useNavigate();
@@ -38,8 +39,14 @@ const SettingsLanguageView: React.FC = () => {
     setSettings((s) => ({ ...s, theme: v }));
   };
 
+  const handlePageFont = (v: PageFont) => {
+    MockDataService.updateSettings({ pageFont: v });
+    setSettings((s) => ({ ...s, pageFont: v }));
+  };
+
   const modelLang = (settings.modelLanguage ?? 'same') as ModelLang;
   const theme = (settings.theme ?? 'system') as Theme;
+  const pageFont = (settings.pageFont ?? 'system') as PageFont;
 
   return (
     <div className="p-6 space-y-6">
@@ -68,6 +75,26 @@ const SettingsLanguageView: React.FC = () => {
               {v === 'system' && t('theme_system')}
               {v === 'light' && t('theme_light')}
               {v === 'dark' && t('theme_dark')}
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <section>
+        <h3 className="text-xs font-bold uppercase tracking-wider text-twilight-duskLight dark:text-nocturnal-secondary mb-3">{t('page_font_section')}</h3>
+        <div className="flex flex-wrap gap-2 p-1">
+          {(['system', 'source-han-sans', 'source-han-serif', 'xlwk'] as PageFont[]).map((v) => (
+            <button
+              key={v}
+              onClick={() => handlePageFont(v)}
+              className={`px-4 py-2 rounded-xl text-sm font-medium ${
+                pageFont === v ? 'bg-twilight-charcoal dark:bg-nocturnal-accent text-twilight-amberMuted dark:text-nocturnal-bg' : 'bg-twilight-cream/60 dark:bg-nocturnal-bg/60 text-twilight-duskLight dark:text-nocturnal-secondary hover:bg-twilight-dusk/10 dark:hover:bg-nocturnal-surface'
+              }`}
+            >
+              {v === 'system' && t('font_system')}
+              {v === 'source-han-sans' && t('font_source_han_sans')}
+              {v === 'source-han-serif' && t('font_source_han_serif')}
+              {v === 'xlwk' && t('font_xlwk')}
             </button>
           ))}
         </div>

@@ -8,6 +8,7 @@
 import JSZip from 'jszip';
 import { WingEntry, DailySession, RawFragment, AiProvider, FragmentType } from '../types';
 import { getLocalDateString } from '../utils/date';
+import { isQuotaExceededError } from '../utils/storage';
 import { MockDataService } from './mockDataService';
 
 export interface ExportData {
@@ -306,8 +307,15 @@ function applyImportMerge(data: ExportData): { success: boolean; message: string
   data.sessions.forEach((session) => {
     if (!sessionMap.has(session.id)) sessionMap.set(session.id, session);
   });
-  localStorage.setItem('wing_entries', JSON.stringify(Array.from(entryMap.values())));
-  localStorage.setItem('wing_sessions', JSON.stringify(Array.from(sessionMap.values())));
+  try {
+    localStorage.setItem('wing_entries', JSON.stringify(Array.from(entryMap.values())));
+    localStorage.setItem('wing_sessions', JSON.stringify(Array.from(sessionMap.values())));
+  } catch (e) {
+    if (isQuotaExceededError(e)) {
+      return { success: false, message: '存储空间不足，无法完成导入。请先清空部分数据或导出备份后重试。' };
+    }
+    throw e;
+  }
 
   const cur = MockDataService.getSettings();
   if (data.apiKeys != null && typeof data.apiKeys === 'object') {
@@ -375,8 +383,15 @@ export const replaceData = (file: File): Promise<{ success: boolean; message: st
  * 用导入的数据完全替换本地 entries 与 sessions
  */
 function applyReplace(data: ExportData): { success: boolean; message: string } {
-  localStorage.setItem('wing_entries', JSON.stringify(data.entries));
-  localStorage.setItem('wing_sessions', JSON.stringify(data.sessions));
+  try {
+    localStorage.setItem('wing_entries', JSON.stringify(data.entries));
+    localStorage.setItem('wing_sessions', JSON.stringify(data.sessions));
+  } catch (e) {
+    if (isQuotaExceededError(e)) {
+      return { success: false, message: '存储空间不足，无法完成替换。请先清空部分数据或导出备份后重试。' };
+    }
+    throw e;
+  }
   if (data.apiKeys != null && typeof data.apiKeys === 'object') {
     MockDataService.updateSettings({ apiKeys: data.apiKeys });
   }
