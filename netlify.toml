@@ -16,15 +16,22 @@
   to = "/.netlify/functions/ai"
   status = 200
 
+# WebDAV 代理：/api/webdav/* -> Netlify Function，在服务端转发以规避浏览器 CORS
+[[redirects]]
+  from = "/api/webdav/*"
+  to = "/.netlify/functions/webdav"
+  status = 200
+
+[[redirects]]
+  from = "/api/webdav"
+  to = "/.netlify/functions/webdav"
+  status = 200
+
 # 单页应用路由重写规则（因为使用了 HashRouter，这个可能不需要，但保留以防万一）
 [[redirects]]
   from = "/*"
   to = "/index.html"
   status = 200
-
-# WebDAV 代理（如果需要的话，可以使用 Netlify Functions）
-# 注意：Netlify 的免费版不支持服务器端代理，WebDAV 功能可能需要客户端直接访问
-# 或者使用 Netlify Edge Functions（需要付费计划）
 
 # 安全头设置
 [[headers]]

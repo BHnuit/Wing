@@ -10,6 +10,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useTranslation } from '../i18n';
 import { useToast } from './ErrorToast';
 import { getLocalDateString } from '../utils/date';
+import { convertImageToBase64 } from '../utils/imageToBase64';
 
 /** 格式化为 HH:mm */
 const formatTime = (ms: number) =>
@@ -70,29 +71,19 @@ const ChatView: React.FC = () => {
   }, [session?.fragments]);
 
   /**
-   * 将图片文件转换为base64
-   */
-  const convertImageToBase64 = (file: File): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => {
-        const result = reader.result as string;
-        resolve(result);
-      };
-      reader.onerror = reject;
-      reader.readAsDataURL(file);
-    });
-  };
-
-  /**
-   * 处理图片选择
+   * 处理图片选择。
+   * 兼容微信等移动端：放宽 file.type 校验（当 type 为空时按扩展名放行），
+   * base64 转换使用 utils/imageToBase64（FileReader 超时后降级为 Canvas）。
    */
   const handleImageSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
 
-    // 检查文件类型
-    if (!file.type.startsWith('image/')) {
+    // 检查文件类型：微信等环境下 file.type 可能为空，按扩展名放行
+    const isImage =
+      file.type.startsWith('image/') ||
+      /\.(jpe?g|png|gif|webp|heic)$/i.test(file.name || '');
+    if (!isImage) {
       showToast(t('invalid_image'), 'error');
       return;
     }
@@ -121,7 +112,10 @@ const ChatView: React.FC = () => {
       }
     } catch (error) {
       console.error('Failed to process image:', error);
-      showToast(t('image_process_failed'), 'error');
+      const isHeic =
+        /\.heic$/i.test(file.name || '') ||
+        (file.type || '').toLowerCase().includes('heic');
+      showToast(isHeic ? t('image_process_failed_heic') : t('image_process_failed'), 'error');
     }
 
     // 重置文件输入

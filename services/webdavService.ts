@@ -43,23 +43,20 @@ export class WebDAVService {
       try {
         await fetch(dirUrl, {
           method: 'MKCOL',
-          headers: {
-            'Authorization': this.getAuthHeader()
-          }
+          headers: { 'Authorization': this.getAuthHeader(), ...this.getProxyHeaderIfNeeded(dirUrl) }
         });
       } catch (e) {
         // 目录可能已存在，忽略错误
       }
 
-      // 测试上传一个小文件
       const testUrl = this.getFullPath('test-connection.txt');
       const testContent = `Wing Connection Test - ${new Date().toISOString()}`;
-      
       const putResponse = await fetch(testUrl, {
         method: 'PUT',
         headers: {
           'Authorization': this.getAuthHeader(),
-          'Content-Type': 'text/plain; charset=utf-8'
+          'Content-Type': 'text/plain; charset=utf-8',
+          ...this.getProxyHeaderIfNeeded(testUrl)
         },
         body: testContent
       });
@@ -76,9 +73,7 @@ export class WebDAVService {
         try {
           await fetch(testUrl, {
             method: 'DELETE',
-            headers: {
-              'Authorization': this.getAuthHeader()
-            }
+            headers: { 'Authorization': this.getAuthHeader(), ...this.getProxyHeaderIfNeeded(testUrl) }
           });
         } catch (e) {
           // 忽略删除错误
@@ -121,9 +116,7 @@ export class WebDAVService {
       try {
         await fetch(dirUrl, {
           method: 'MKCOL',
-          headers: {
-            'Authorization': this.getAuthHeader()
-          }
+          headers: { 'Authorization': this.getAuthHeader(), ...this.getProxyHeaderIfNeeded(dirUrl) }
         });
       } catch (e) {
         // 目录可能已存在，忽略错误
@@ -134,7 +127,8 @@ export class WebDAVService {
         method: 'PUT',
         headers: {
           'Authorization': this.getAuthHeader(),
-          'Content-Type': 'application/json; charset=utf-8'
+          'Content-Type': 'application/json; charset=utf-8',
+          ...this.getProxyHeaderIfNeeded(url)
         },
         body: content
       });
@@ -186,7 +180,7 @@ export class WebDAVService {
       try {
         await fetch(dirUrl, {
           method: 'MKCOL',
-          headers: { 'Authorization': this.getAuthHeader() }
+          headers: { 'Authorization': this.getAuthHeader(), ...this.getProxyHeaderIfNeeded(dirUrl) }
         });
       } catch (e) {
         // 目录可能已存在，忽略
@@ -197,7 +191,8 @@ export class WebDAVService {
         method: 'PUT',
         headers: {
           'Authorization': this.getAuthHeader(),
-          'Content-Type': mimeType
+          'Content-Type': mimeType,
+          ...this.getProxyHeaderIfNeeded(url)
         },
         body: blob
       });
@@ -225,9 +220,7 @@ export class WebDAVService {
       const url = this.getFullPath(fileName);
       const response = await fetch(url, {
         method: 'GET',
-        headers: {
-          'Authorization': this.getAuthHeader()
-        }
+        headers: { 'Authorization': this.getAuthHeader(), ...this.getProxyHeaderIfNeeded(url) }
       });
 
       if (response.status === 404) {
@@ -310,23 +303,33 @@ if (!fileName) {
 
   /**
    * 获取完整的文件路径
-   * 在开发环境中使用 Vite 代理，生产环境直接访问
+   * 开发环境：坚果云走 Vite /api/webdav 代理；生产环境：走 Netlify /api/webdav 代理，避免 CORS
    */
   private getFullPath(fileName: string): string {
-    // 检查是否是开发环境（通过检查是否在 localhost 或使用代理）
     const isDev = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-    
-    // 如果是坚果云且是开发环境，使用代理
+    const path = `Wing/${fileName}`;
+
     if (isDev && this.config.url.includes('jianguoyun.com')) {
-      const path = `Wing/${fileName}`;
       return `/api/webdav/${path}`;
     }
-    
-    // 生产环境或其他 WebDAV 服务器，直接访问
-    const baseUrl = this.config.url.endsWith('/') 
-      ? this.config.url 
-      : `${this.config.url}/`;
+    if (!isDev) {
+      return `/api/webdav/${path}`;
+    }
+    const baseUrl = this.config.url.endsWith('/') ? this.config.url : `${this.config.url}/`;
     return `${baseUrl}Wing/${fileName}`;
+  }
+
+  /** 规范化 WebDAV 根 URL（供代理请求头 X-WebDAV-Base-URL 使用） */
+  private getBaseUrl(): string {
+    const u = this.config.url;
+    return u.endsWith('/') ? u : u + '/';
+  }
+
+  /**
+   * 当请求走 /api/webdav 代理时，附加 X-WebDAV-Base-URL 以便服务端转发
+   */
+  private getProxyHeaderIfNeeded(url: string): Record<string, string> {
+    return url.startsWith('/api/webdav') ? { 'X-WebDAV-Base-URL': this.getBaseUrl() } : {};
   }
 
   /**
