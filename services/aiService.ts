@@ -391,7 +391,7 @@ export const AiService = {
    * @param settings 应用设置（含 aiProvider、apiKey、aiBaseUrl、aiModels）
    * @param retries 重试次数
    * @param previousGeneration 重新生成时的已有正文
-   * @param opts 可选，stream: 走代理时是否请求流式（默认 true）
+   * @param opts 可选，stream: 走代理时是否请求流式（默认 true）；skipInsight: 仅代理模式下服务端跳过洞察以降低 504 超时，由客户端单独请求
    */
   async synthesizeJournal(
     fragments: RawFragment[],
@@ -399,7 +399,7 @@ export const AiService = {
     settings: AppSettings,
     retries: number = 2,
     previousGeneration?: string,
-    opts?: { stream?: boolean }
+    opts?: { stream?: boolean; skipInsight?: boolean }
   ): Promise<Partial<WingEntry>> {
     if (!getEffectiveApiKey(settings)) {
       throw new AiAPIError('请先在设置中配置 API 密钥', 'MISSING_API_KEY');
@@ -476,7 +476,31 @@ export const AiService = {
 
       const data = (await res.json().catch(() => ({}))) as Partial<WingEntry> & { error?: string; code?: string };
       if (!res.ok) throw new AiAPIError(data.error || res.statusText || `请求失败 (HTTP ${res.status})`, data.code, res.status);
-      return data;
+      let entry = data;
+      // 代理端 synthesize 已用 skipInsight 仅做正文，此处单独请求洞察以规避 Netlify 10s 超时；失败则留空，用户可于详情页「仅重新生成洞察」
+      if ((entry.aiInsights == null || entry.aiInsights === '') && (entry.title != null || (entry.markdownContent != null && String(entry.markdownContent).trim() !== ''))) {
+        try {
+          const ir = await fetch(AI_PROXY_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              action: 'regenerateInsight',
+              provider,
+              apiKey: getEffectiveApiKey(settings),
+              baseUrl: provider === 'custom' ? (settings.aiBaseUrl || '').trim() : undefined,
+              model: getModel(settings),
+              lang,
+              entry: { title: entry.title, mood: entry.mood, summary: entry.summary, markdownContent: entry.markdownContent },
+              insightPrompt: settings.insightPrompt
+            })
+          });
+          const idata = (await ir.json().catch(() => ({}))) as { text?: string; error?: string; code?: string };
+          if (ir.ok && idata.text != null) entry = { ...entry, aiInsights: idata.text };
+        } catch {
+          /* 洞察请求失败则保留空，用户可于详情页「仅重新生成洞察」 */
+        }
+      }
+      return entry;
     }
 
     let baseResult: Partial<WingEntry>;
@@ -507,10 +531,11 @@ export const AiService = {
       baseResult = await openAICompatibleSynthesize(fragments, lang, settings, retries, previousGeneration);
     }
 
-    // 洞察改为根据已生成的日记正文单独生成，而非根据消息记录
+    // 洞察改为根据已生成的日记正文单独生成，而非根据消息记录；skipInsight 时仅返回正文，由代理端客户端单独请求洞察以规避 10s 超时
     const md = (baseResult.markdownContent != null && String(baseResult.markdownContent).trim() !== '')
       ? baseResult.markdownContent
       : (previousGeneration || '');
+    if (opts?.skipInsight) return { ...baseResult, aiInsights: '', markdownContent: md };
     const partial: Pick<WingEntry, 'title' | 'mood' | 'summary' | 'markdownContent'> = {
       title: baseResult.title ?? '',
       mood: baseResult.mood ?? '',

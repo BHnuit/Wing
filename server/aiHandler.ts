@@ -139,7 +139,8 @@ export async function handleAiRequest(body: AiProxyBody): Promise<AiProxyResult>
           lang,
           settings,
           2,
-          typeof previousGeneration === 'string' ? previousGeneration : undefined
+          typeof previousGeneration === 'string' ? previousGeneration : undefined,
+          { skipInsight: true }
         );
         return { status: 200, data: ret };
       }
