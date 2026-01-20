@@ -17,10 +17,12 @@
   status = 200
 
 # WebDAV 代理：/api/webdav/* -> Netlify Function，在服务端转发以规避浏览器 CORS
+# 使用 :splat 将路径通过 query 传入，避免 rewrite 后 event.path 在部分环境下丢失；force 避免被静态资源抢占
 [[redirects]]
   from = "/api/webdav/*"
-  to = "/.netlify/functions/webdav"
+  to = "/.netlify/functions/webdav?path=:splat"
   status = 200
+  force = true
 
 [[redirects]]
   from = "/api/webdav"

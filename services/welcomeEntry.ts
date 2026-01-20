@@ -19,10 +19,9 @@ Wing 的名字承载着双重意象：**羽毛笔**与**翅膀**。
 
 # 如何使用 Wing
 
-1. **记录碎片**：在「记录」页面随时输入文字或上传图片，无需立即整理，先让思绪落下。
-2. **智能创建**：在一天将尽时，点击「收拢今日羽毛」，AI 会将零散记录合成为一篇结构化的日记，包括心情、摘要、洞察与待办。
-3. **日记管理**：在「日记」页面浏览所有日记，点进任意一篇可查看、编辑、重新生成或导出。
-4. **备份同步**：在「设置」→「存储管理」中配置 WebDAV（如坚果云），即可将数据备份到云端；也支持 JSON 导入与导出。
+1. **在设置中填入 API Key**：打开「设置」→「AI 配置」，填入你的 API Key（支持 Gemini、OpenAI、DeepSeek 等）。密钥只保存在你的设备上，应用不会上传。
+2. **以消息形式记录思绪**：在「记录」页随时输入文字或上传图片，想到什么就记什么，每条都会以消息形式保存，不用马上整理。
+3. **一天结束前生成日记**：当有记录后，**长按**或**双击**发送按钮（按钮会变成 ∞），再点一下即可生成今日日记；在日记详情里可以查看 AI 的**洞察**和**待办**。
 
 ---
 
@@ -50,10 +49,9 @@ Like a quill, it captures fragments of life with a light touch; like an owl fold
 
 # How to Use Wing
 
-1. **Record fragments**: On the Recording page, type or upload images anytime. No need to organize at once—let your thoughts land first.
-2. **Smart creation**: When the day winds down, tap **Gather Today's Feathers**. AI will turn your fragments into a structured journal entry: mood, summary, insights, and to-dos.
-3. **Journal management**: Browse all entries on the Journals page. Open any one to view, edit, regenerate, or export.
-4. **Backup & sync**: In **Settings → Storage**, configure WebDAV (e.g. Jianguoyun) to back up to the cloud. JSON import and export are also supported.
+1. **Add your API key in Settings**: Open **Settings → AI**, and enter your API key (e.g. Gemini, OpenAI, DeepSeek). It is stored only on your device; the app does not upload it.
+2. **Record thoughts as messages**: On the Record page, type or upload images anytime. Jot down whatever comes to mind—each item is saved as a message. No need to organize right away.
+3. **Generate your diary before the day ends**: When you have at least one record, **long‑press** or **double‑click** the send button (it turns into ∞), then tap once to generate today’s journal. Open the entry to view **insights** and **to‑dos**.
 
 ---
 

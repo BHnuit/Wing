@@ -14,6 +14,8 @@ interface NetlifyEvent {
   headers?: NetlifyHeaders;
   body?: string | null;
   isBase64Encoded?: boolean;
+  /** 使用 ?path=:splat 重定向时，路径会出现在此处 */
+  queryStringParameters?: Record<string, string> | null;
 }
 
 interface NetlifyResponse {
@@ -72,12 +74,25 @@ export const handler = async (event: NetlifyEvent): Promise<NetlifyResponse> => 
   }
 
   const method = (event.httpMethod || 'GET').toUpperCase();
-  const path = event.path || '';
-  const prefix = '/api/webdav';
-  const relativePath = getPathAfterPrefix(path, prefix + '/') || getPathAfterPrefix(path, prefix) || '';
-
   const headers = (event.headers || {}) as Record<string, string>;
   const baseUrl = headers['x-webdav-base-url'] || headers['X-WebDAV-Base-URL'];
+
+  // 优先从 ?path=:splat 取路径（Netlify 重写时显式传入）；否则从 event.path 解析
+  let relativePath = '';
+  const fromQuery = event.queryStringParameters?.path;
+  if (typeof fromQuery === 'string' && fromQuery.length > 0) {
+    try {
+      relativePath = decodeURIComponent(fromQuery).replace(/^\/*|\/*$/g, '').trim() || '';
+    } catch {
+      relativePath = '';
+    }
+  }
+  if (!relativePath) {
+    const path = event.path || '';
+    const prefix = '/api/webdav';
+    relativePath = getPathAfterPrefix(path, prefix + '/') || getPathAfterPrefix(path, prefix) || '';
+  }
+
   if (!baseUrl || !relativePath) {
     return {
       statusCode: 400,

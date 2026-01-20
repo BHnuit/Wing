@@ -14,3 +14,4 @@
 *.yaml   text working-tree-encoding=UTF-8
 *.yml    text working-tree-encoding=UTF-8
 *.sh     text working-tree-encoding=UTF-8
+*.ps1    text working-tree-encoding=UTF-8

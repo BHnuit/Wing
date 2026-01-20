@@ -1,6 +1,7 @@
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useContext } from 'react';
 import { Send, CheckCircle2, Image as ImageIcon, Loader2, ChevronLeft, ChevronRight, Infinity } from 'lucide-react';
+import { TabBarScrollContext } from '../contexts/TabBarScrollContext';
 import { EmptyStateOwl, LoadingOwl, OwlLogo } from './OwlAssets';
 import { MockDataService } from '../services/mockDataService';
 import { AiService, AiAPIError, getEffectiveApiKey, getModelResponseLanguage } from '../services/aiService';
@@ -11,6 +12,7 @@ import { useTranslation } from '../i18n';
 import { useToast } from './ErrorToast';
 import { getLocalDateString } from '../utils/date';
 import { convertImageToBase64 } from '../utils/imageToBase64';
+import { getRandomPromptGuides, getRandomPlaceholderQuestion } from '../utils/promptGuides';
 
 /** 格式化为 HH:mm */
 const formatTime = (ms: number) =>
@@ -105,7 +107,9 @@ const ChatView: React.FC = () => {
   const [editDraft, setEditDraft] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const { showToast, ToastContainer } = useToast();
+  const tabBarReportScroll = useContext(TabBarScrollContext)?.reportScroll;
 
   useEffect(() => {
     setSession(MockDataService.getSessionByDate(viewDate) ?? null);
@@ -368,6 +372,18 @@ const ChatView: React.FC = () => {
   const fragments = session?.fragments ?? [];
   const isCompleted = session?.status === SessionStatus.COMPLETED;
 
+  /** 空白引导：L1 随机 2–3 个、L2 随机 1–2 个、L3 固定 1 个，随语言与日期稳定，点击填入输入框 */
+  const promptGuides = useMemo(
+    () => getRandomPromptGuides(settings.language),
+    [settings.language, viewDate]
+  );
+
+  /** 当日已有记录时，输入框占位语：从 L1/L2/L3 合并池随机取 1 条，随语言与日期稳定 */
+  const inputPlaceholderQuestion = useMemo(
+    () => getRandomPlaceholderQuestion(settings.language),
+    [settings.language, viewDate]
+  );
+
   /**
    * 收拢时间线：合并「开始收拢」与「已生成《xx》」，按时间排序；再次生成时多条叠加展示。
    * 旧数据无 gatherCompletions 时，从 finalEntryId 推导一条以保持兼容。
@@ -441,12 +457,31 @@ const ChatView: React.FC = () => {
         </button>
       </div>
 
-      <div className="flex-1 min-h-0 overflow-y-auto p-6">
+      <div
+        className="flex-1 min-h-0 overflow-y-auto p-6"
+        onScroll={(e) => tabBarReportScroll?.(e.currentTarget.scrollTop)}
+      >
         {fragments.length === 0 ? (
           <div className="h-[60vh] flex flex-col items-center justify-center text-twilight-duskLight dark:text-nocturnal-secondary space-y-4">
             <EmptyStateOwl size={100} />
-            <p className="serif italic text-lg text-center px-12">
-              {t('empty_chat')}
+            <div className="flex flex-wrap justify-center gap-2 max-w-md px-4">
+              {promptGuides.map((q) => (
+                <button
+                  key={q}
+                  type="button"
+                  onClick={() => {
+                    setInput(q);
+                    setInputFocused(true);
+                    textareaRef.current?.focus();
+                  }}
+                  className="px-3 py-1.5 text-sm text-twilight-charcoal dark:text-nocturnal-primary bg-twilight-cream/60 dark:bg-nocturnal-surface/60 border border-twilight-divider/80 dark:border-nocturnal-secondary/30 rounded-full hover:bg-twilight-amber/10 dark:hover:bg-nocturnal-accent/10 hover:border-twilight-amber/50 dark:hover:border-nocturnal-accent/40 transition-colors cursor-pointer"
+                >
+                  {q}
+                </button>
+              ))}
+            </div>
+            <p className="text-xs text-twilight-duskLight/80 dark:text-nocturnal-secondary/80">
+              {t('prompt_guide_hint')}
             </p>
           </div>
         ) : (
@@ -596,6 +631,7 @@ const ChatView: React.FC = () => {
         <div ref={inputContainerRef} className="w-full flex flex-col bg-white dark:bg-nocturnal-surface rounded-2xl overflow-hidden border border-twilight-divider/60 dark:border-nocturnal-secondary/25 focus-within:ring-2 focus-within:ring-twilight-amber/25 dark:focus-within:ring-nocturnal-accent/40 focus-within:ring-inset min-h-0">
           <div className="relative flex-1 flex min-h-0">
             <textarea
+              ref={textareaRef}
               rows={inputFocused ? 5 : 3}
               value={input}
               onChange={(e) => setInput(e.target.value)}
@@ -615,7 +651,7 @@ const ChatView: React.FC = () => {
                   handleSend();
                 }
               }}
-              placeholder={t('mind_placeholder')}
+              placeholder={fragments.length > 0 ? inputPlaceholderQuestion : t('mind_placeholder')}
               className="w-full bg-transparent border-none resize-none outline-none focus:ring-0 text-twilight-charcoal dark:text-nocturnal-primary px-4 pt-3 pb-2 pr-11 max-h-40 placeholder:text-twilight-duskLight placeholder:dark:text-nocturnal-secondary"
             />
             <div className={`absolute top-3 right-3 transition-all duration-300 ${showSuccess ? 'scale-110 opacity-100' : 'scale-50 opacity-0'}`} aria-hidden="true">

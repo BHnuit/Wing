@@ -363,7 +363,8 @@ export class WebDAVService {
    */
   private getFullPath(fileName: string): string {
     const isDev = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-    const path = `Wing/${fileName}`;
+    /** 目录列表用 Wing 而非 Wing/，避免 Netlify /api/webdav/* 对尾部斜杠的匹配问题；WebDAV 对 PROPFIND 二者皆可 */
+    const path = fileName === '' ? 'Wing' : `Wing/${fileName}`;
 
     if (isDev && this.config.url.includes('jianguoyun.com')) {
       return `/api/webdav/${path}`;
