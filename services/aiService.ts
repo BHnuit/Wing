@@ -436,7 +436,7 @@ export const AiService = {
         const reader = res.body?.getReader();
         if (!reader) {
           const j = (await res.json().catch(() => ({}))) as { error?: string; code?: string };
-          if (!res.ok) throw new AiAPIError(j.error || '请求失败', j.code, res.status);
+          if (!res.ok) throw new AiAPIError(j.error || res.statusText || `请求失败 (HTTP ${res.status})`, j.code, res.status);
           return j as Partial<WingEntry>;
         }
         let buf = '';
@@ -475,7 +475,7 @@ export const AiService = {
       }
 
       const data = (await res.json().catch(() => ({}))) as Partial<WingEntry> & { error?: string; code?: string };
-      if (!res.ok) throw new AiAPIError(data.error || '请求失败', data.code, res.status);
+      if (!res.ok) throw new AiAPIError(data.error || res.statusText || `请求失败 (HTTP ${res.status})`, data.code, res.status);
       return data;
     }
 
@@ -555,7 +555,7 @@ export const AiService = {
         })
       });
       const data = (await res.json().catch(() => ({}))) as { text?: string; error?: string; code?: string };
-      if (!res.ok) throw new AiAPIError(data.error || '请求失败', data.code, res.status);
+      if (!res.ok) throw new AiAPIError(data.error || res.statusText || `请求失败 (HTTP ${res.status})`, data.code, res.status);
       return data.text ?? '';
     }
 
@@ -609,7 +609,7 @@ export const AiService = {
         })
       });
       const data = (await res.json().catch(() => ({}))) as { success?: boolean; message?: string; error?: string };
-      if (!res.ok) return { success: false, message: data.error || '请求失败' };
+      if (!res.ok) return { success: false, message: data.error || res.statusText || `请求失败 (HTTP ${res.status})` };
       return { success: !!data.success, message: data.message ?? '' };
     }
 

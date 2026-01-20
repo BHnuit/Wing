@@ -22,6 +22,6 @@ export const handler = async (event: NetlifyEvent) => {
   }
 
   const result = await handleAiRequest(body);
-  const payload = result.data != null ? result.data : { error: result.error, code: result.code };
+  const payload = result.data != null ? result.data : { error: result.error || '请求失败', code: result.code };
   return { statusCode: result.status, headers, body: JSON.stringify(payload) };
 };

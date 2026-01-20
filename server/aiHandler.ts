@@ -162,10 +162,15 @@ export async function handleAiRequest(body: AiProxyBody): Promise<AiProxyResult>
         return { status: 400, error: `不支持的 action: ${action}` };
     }
   } catch (e: unknown) {
-    const err = e as { message?: string; code?: string; statusCode?: number };
-    const msg = err?.message || 'AI 请求失败';
+    const err = e as { message?: string; code?: string; statusCode?: number; details?: unknown; error?: { message?: string } };
+    const msg =
+      (typeof err?.message === 'string' && err.message) ||
+      (err?.error && typeof (err.error as { message?: string }).message === 'string' && (err.error as { message?: string }).message) ||
+      (err?.details && String(err.details)) ||
+      (err && typeof err === 'object' && 'toString' in err && typeof (err as { toString: () => string }).toString === 'function' ? (err as { toString: () => string }).toString() : '') ||
+      'AI 请求失败';
     const code = err?.code;
     const status = typeof err?.statusCode === 'number' ? err.statusCode : 500;
-    return { status, error: msg, code };
+    return { status, error: String(msg).slice(0, 500), code };
   }
 }

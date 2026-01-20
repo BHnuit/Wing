@@ -1,3 +1,6 @@
+# AI 函数 (/api/ai)：Netlify 默认 10 秒超时。若出现 504 或「请求失败 (HTTP 504)」，
+# 多为合成超时：可减少当日记录长度，或改用更快模型（如 gemini-2.0-flash）。Pro 可联系支持延至 26s。
+
 [build]
   # 构建命令
   command = "npm run build"
