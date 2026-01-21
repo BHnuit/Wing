@@ -31,6 +31,8 @@ export interface RawFragment {
 export interface WingTodo {
   title: string;
   priority: 'high' | 'medium' | 'low';
+  /** 是否已完成；未设置视为 false */
+  completed?: boolean;
 }
 
 /** 编辑历史单条：保存编辑前的 title 与 markdownContent 快照 */

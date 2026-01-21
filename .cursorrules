@@ -76,7 +76,7 @@ Wing/
 
 ## 6. Key Features Implemented
 - ✅ Fragment recording (text + images), message edit, `editedAt`; record view by date + `?date=` + picker
-- ✅ Journal detail: "View day records"; edit title/Markdown, edit history, restore; regenerate (overwrite/new), regenerate insight; share image, copy, copy as new, delete
+- ✅ Journal detail: "View day records"; edit title/Markdown, edit history, restore; regenerate (overwrite/new), regenerate insight; share image, copy, copy as new, delete; **todos copy to clipboard**
 - ✅ AI: Gemini, OpenAI, DeepSeek, custom Base; test connection; `/api/ai` in prod
 - ✅ Export ZIP (data.json + images/), import .json/.zip, replace; WebDAV, realtime sync option
 - ✅ Theme (system/light/dark), twilight/nocturnal UI, OwlAssets, i18n (zh/en), model output language
@@ -89,9 +89,10 @@ Wing/
 - **Storage**: localStorage ~5–10MB; consider IndexedDB for scale
 
 ## 8. Future Considerations (Not Yet Done)
-- 空白引导提示 (empty-state prompts, click to fill input)
-- 待办导出 (todos as JSON/TXT/CSV or copy)
-- 文风选择 (letter/essay/report + custom in system prompt)
+- **PWA**（高优）：离线可用、安装到主屏
+- 待办多格式导出 (todos as JSON/TXT/CSV；复制到剪贴板已实现)
 - 日记导入多平台 (Day One, Journey, etc.; multi-format, mapping)
 - 定时/后台 WebDAV 同步 (beyond current realtime-on-action)
-- PWA, IndexedDB, 统计扩展 (mood trend, streak, word cloud)
+- 统计扩展 (mood trend, streak, word cloud)
+
+> 已完成：空白引导提示、文风选择、待办一键复制到剪贴板、IndexedDB。

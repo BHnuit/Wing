@@ -173,6 +173,23 @@ export const translations = {
     edited: '已编辑',
     edit: '编辑',
     double_click_to_edit: '双击编辑',
+    /** 待办：标记为已完成（勾选按钮） */
+    todo_mark_done: '标记为已完成',
+    /** 待办：恢复未完成（再次点击勾选） */
+    todo_restore: '恢复未完成',
+    /** 优先级：高、中、低 */
+    priority_high: '高优先级',
+    priority_medium: '中优先级',
+    priority_low: '低优先级',
+    /** 待办已完成时优先级位置显示的文案 */
+    todo_completed: '已完成',
+    /** 删除单条待办 */
+    todo_delete: '删除待办',
+    /** 删除待办二次确认 */
+    todo_delete_confirm: '确定删除这条待办？',
+    todo_deleted: '已删除',
+    /** 待办区块：复制全部待办到剪贴板（按钮 title） */
+    todo_copy: '复制待办到剪贴板',
     edit_entry: '编辑此日记',
     save: '保存',
     save_edit: '保存编辑',
@@ -400,6 +417,16 @@ export const translations = {
     edited: 'Edited',
     edit: 'Edit',
     double_click_to_edit: 'Double-click to edit',
+    todo_mark_done: 'Mark as done',
+    todo_restore: 'Restore to incomplete',
+    priority_high: 'High priority',
+    priority_medium: 'Medium priority',
+    priority_low: 'Low priority',
+    todo_completed: 'Completed',
+    todo_delete: 'Delete todo',
+    todo_delete_confirm: 'Delete this todo?',
+    todo_deleted: 'Deleted',
+    todo_copy: 'Copy todos to clipboard',
     edit_entry: 'Edit this journal',
     save: 'Save',
     save_edit: 'Save edits',

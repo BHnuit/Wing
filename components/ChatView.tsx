@@ -706,11 +706,11 @@ const ChatView: React.FC = () => {
             );
           })
         )}
-        <div ref={scrollRef} className="mt-6" />
+        <div className="mt-6" />
       </div>
 
-      {/* 占位：避免最后一条内容被固定消息栏遮挡 */}
-      <div className="h-24 flex-shrink-0" aria-hidden="true" />
+      {/* 占位：避免最后一条内容被固定消息栏遮挡；scrollRef 挂在此处使 scrollIntoView 能滚到真正底部 */}
+      <div ref={scrollRef} className="h-24 flex-shrink-0" aria-hidden="true" />
 
       <div
         className={`fixed bottom-4 left-1/2 -translate-x-1/2 w-full max-w-2xl z-40 px-4 py-3 transition-transform duration-300 ease-out ${inputBarVisible ? 'translate-y-0' : 'translate-y-full pointer-events-none'}`}
@@ -735,7 +735,12 @@ const ChatView: React.FC = () => {
               rows={inputFocused ? 5 : collapsedRows}
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              onFocus={() => setInputFocused(true)}
+              onFocus={() => {
+                /** 点击输入框时：先滚到底部再展开。仅用 scrollIntoView（直接改 main.scrollTop 在此布局下无效），scrollRef 在 h-24 上故能滚到真正底部 */
+                scrollRef.current?.scrollIntoView({ block: 'end', behavior: 'auto' });
+                setInputBarVisible(true);
+                setInputFocused(true);
+              }}
               readOnly={isSynthesizing}
               onBlur={() => {
                 /** 延迟一帧判断：若焦点仍在输入容器内（如点击了发送/加图按钮），不折叠，避免无法发送或连点/长按进入收拢模式 */
