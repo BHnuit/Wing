@@ -260,19 +260,48 @@ export class WebDAVService {
   }
 
   /**
-   * 备份所有数据到 WebDAV：单 ZIP（≤5.5MB）或分卷（data.json + images_*.zip）。
-   * 分卷数超过上限或上传失败时走方案3 兜底：返回 fallbackDownload，由调用方触发下载并提示用户手动上传云盘。
+   * 确保远端路径对应的目录存在（MKCOL），若已存在则忽略错误
+   * @param relativePath 相对于 Wing/ 的路径，如 ''（Wing 根）、'2025-01-15'（日期文件夹）
    */
-  async backupData(entries: WingEntry[], sessions: DailySession[]): Promise<SyncStatus> {
+  private async ensureDir(relativePath: string): Promise<void> {
+    const path = this.getFullPath(relativePath);
     try {
+      await fetch(path, {
+        method: 'MKCOL',
+        headers: { Authorization: this.getAuthHeader(), ...this.getProxyHeaderIfNeeded(path) }
+      });
+    } catch {
+      /* 目录可能已存在 */
+    }
+  }
+
+  /**
+   * 备份所有数据到 WebDAV，按日期建文件夹：Wing/YYYY-MM-DD/ 内存放单 ZIP 或 data.json + images_*.zip。
+   * 分卷数超过上限或上传失败时走方案3 兜底：返回 fallbackDownload，由调用方触发下载并提示用户手动上传云盘。
+   * @param onProgress 进度回调，用于按步骤更新 UI 文案：key 为 i18n 键，extra 可选 { current, total } 如上传分卷时
+   */
+  async backupData(
+    entries: WingEntry[],
+    sessions: DailySession[],
+    onProgress?: (key: string, extra?: { current?: number; total?: number }) => void
+  ): Promise<SyncStatus> {
+    try {
+      onProgress?.('webdav_backup_preparing');
+      const dateFolder = getLocalDateString();
+      await this.ensureDir('');
+      await this.ensureDir(dateFolder);
+
       const prepared = await buildBackupZipOrSplit(entries, sessions);
+      const prefix = `${dateFolder}/`;
 
       if (prepared.mode === 'single') {
-        const fileName = `wing-backup-${getLocalDateString()}.zip`;
+        onProgress?.('webdav_backup_uploading_single');
+        const fileName = `${prefix}wing-backup-${dateFolder}.zip`;
         return await this.uploadBlob(fileName, prepared.blob, 'application/zip');
       }
 
       if (prepared.imageZipBlobs.length > BACKUP_MAX_SPLIT_PARTS) {
+        onProgress?.('webdav_backup_preparing');
         const fullBlob = await buildBackupZip(entries, sessions);
         return {
           success: false,
@@ -281,14 +310,19 @@ export class WebDAVService {
         };
       }
 
-      const ru = await this.uploadFile(`${prepared.baseName}.json`, prepared.dataJson);
+      onProgress?.('webdav_backup_uploading_json');
+      const ru = await this.uploadFile(`${prefix}${prepared.baseName}.json`, prepared.dataJson);
       if (!ru.success) {
+        onProgress?.('webdav_backup_preparing');
         const fullBlob = await buildBackupZip(entries, sessions);
         return { success: false, message: ru.message, fallbackDownload: fullBlob };
       }
-      for (let i = 0; i < prepared.imageZipBlobs.length; i++) {
-        const r = await this.uploadBlob(`${prepared.baseName}_images_${i + 1}.zip`, prepared.imageZipBlobs[i], 'application/zip');
+      const total = prepared.imageZipBlobs.length;
+      for (let i = 0; i < total; i++) {
+        onProgress?.('webdav_backup_uploading_images', { current: i + 1, total });
+        const r = await this.uploadBlob(`${prefix}${prepared.baseName}_images_${i + 1}.zip`, prepared.imageZipBlobs[i], 'application/zip');
         if (!r.success) {
+          onProgress?.('webdav_backup_preparing');
           const fullBlob = await buildBackupZip(entries, sessions);
           return { success: false, message: r.message, fallbackDownload: fullBlob };
         }
@@ -296,6 +330,7 @@ export class WebDAVService {
       return { success: true, message: '备份成功', timestamp: Date.now() };
     } catch (error) {
       try {
+        onProgress?.('webdav_backup_preparing');
         const fullBlob = await buildBackupZip(entries, sessions);
         return {
           success: false,
@@ -312,15 +347,18 @@ export class WebDAVService {
   }
 
   /**
-   * 将平面文件列表分组为「单文件备份」与「分卷备份」集合，供还原 UI 使用
+   * 将某日期文件夹内的文件列表分组为「单文件备份」与「分卷备份」，并为每条记录附加 folder 供下载使用
    */
-  static groupBackupSets(files: { name: string; lastModified: number }[]): {
-    single: { name: string; lastModified: number }[];
-    split: { jsonName: string; imageNames: string[]; lastModified: number }[];
+  static groupBackupSets(
+    files: { name: string; lastModified: number }[],
+    folder: string
+  ): {
+    single: { folder: string; name: string; lastModified: number }[];
+    split: { folder: string; jsonName: string; imageNames: string[]; lastModified: number }[];
   } {
     const single = files.filter((f) => /^wing-backup-\d{4}-\d{2}-\d{2}\.zip$/.test(f.name));
     const jsonFiles = files.filter((f) => /^wing-backup-(\d{4}-\d{2}-\d{2})\.json$/.test(f.name));
-    const split: { jsonName: string; imageNames: string[]; lastModified: number }[] = [];
+    const split: { folder: string; jsonName: string; imageNames: string[]; lastModified: number }[] = [];
     for (const j of jsonFiles) {
       const date = j.name.replace(/^wing-backup-(\d{4}-\d{2}-\d{2})\.json$/, '$1');
       const imageFiles = files
@@ -331,35 +369,41 @@ export class WebDAVService {
           return na - nb;
         });
       split.push({
+        folder,
         jsonName: j.name,
         imageNames: imageFiles.map((x) => x.name),
         lastModified: imageFiles.length ? Math.max(j.lastModified, ...imageFiles.map((x) => x.lastModified)) : j.lastModified
       });
     }
-    return { single: single.map((f) => ({ name: f.name, lastModified: f.lastModified })), split };
+    return {
+      single: single.map((f) => ({ folder, name: f.name, lastModified: f.lastModified })),
+      split
+    };
   }
 
   /**
-   * 下载一个备份集合：单文件返回 File；分卷返回 jsonContent + imageZipBlobs
+   * 下载一个备份集合：单文件返回 File；分卷返回 jsonContent + imageZipBlobs。路径为 folder/name。
    */
   async downloadBackupSet(
-    set: { type: 'single'; name: string } | { type: 'split'; jsonName: string; imageNames: string[] }
+    set:
+      | { type: 'single'; folder: string; name: string }
+      | { type: 'split'; folder: string; jsonName: string; imageNames: string[] }
   ): Promise<
     | { type: 'single'; file: File }
     | { type: 'split'; jsonContent: string; imageZipBlobs: Blob[] }
     | { success: false; message: string }
   > {
     if (set.type === 'single') {
-      const r = await this.downloadBackupFile(set.name);
+      const r = await this.downloadBackupFile(`${set.folder}/${set.name}`);
       if (!r.success || !r.file) return { success: false, message: r.message };
       return { type: 'single', file: r.file };
     }
-    const rj = await this.downloadBackupFile(set.jsonName);
+    const rj = await this.downloadBackupFile(`${set.folder}/${set.jsonName}`);
     if (!rj.success || !rj.file) return { success: false, message: rj.message };
     const jsonContent = await rj.file.text();
     const imageZipBlobs: Blob[] = [];
     for (const n of set.imageNames) {
-      const ri = await this.downloadBackupFile(n);
+      const ri = await this.downloadBackupFile(`${set.folder}/${n}`);
       if (!ri.success || !ri.file) return { success: false, message: ri.message };
       imageZipBlobs.push(ri.file);
     }
@@ -367,8 +411,102 @@ export class WebDAVService {
   }
 
   /**
+   * 列出 Wing 下按日期命名的备份文件夹（YYYY-MM-DD），按名称倒序
+   */
+  async listBackupFolders(): Promise<{ success: boolean; folders?: { name: string; lastModified?: number }[]; message: string }> {
+    try {
+      const dirUrl = this.getFullPath('');
+      const propfindXml = `<?xml version="1.0" encoding="utf-8"?><propfind xmlns="DAV:"><prop><getlastmodified/><resourcetype/></prop></propfind>`;
+      const res = await fetch(dirUrl, {
+        method: 'PROPFIND',
+        headers: {
+          Authorization: this.getAuthHeader(),
+          Depth: '1',
+          'Content-Type': 'application/xml; charset=utf-8',
+          ...this.getProxyHeaderIfNeeded(dirUrl)
+        },
+        body: propfindXml
+      });
+      if (res.status === 401 || res.status === 403) return { success: false, message: '认证失败，请检查用户名和密码' };
+      if (res.status === 404) return { success: true, folders: [], message: '' };
+      if (res.status !== 207 && (res.status < 200 || res.status >= 300)) return { success: false, message: `列表失败: HTTP ${res.status}` };
+      const text = await res.text();
+      const folders: { name: string; lastModified?: number }[] = [];
+      const blockRe = /<[a-z]:?response[^>]*>([\s\S]*?)<\/[a-z]:?response>/gi;
+      const hrefRe = /<[a-z]:?href>([^<]*)<\/[a-z]:?href>/i;
+      const modRe = /<[a-z]:?getlastmodified>([^<]*)<\/[a-z]:?getlastmodified>/i;
+      const collRe = /<[a-z]:?collection\s*\/>/i;
+      let m: RegExpExecArray | null;
+      while ((m = blockRe.exec(text)) !== null) {
+        const block = m[1];
+        if (!collRe.test(block)) continue;
+        const hrefM = hrefRe.exec(block);
+        const modM = modRe.exec(block);
+        if (!hrefM) continue;
+        const href = decodeURIComponent(hrefM[1].replace(/^\s+|\s+$/g, ''));
+        const segments = href.replace(/\/$/, '').split('/').filter(Boolean);
+        const name = segments[segments.length - 1] || '';
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(name)) continue;
+        const lastModified = modM ? (Date.parse(modM[1].trim()) || undefined) : undefined;
+        folders.push({ name, lastModified });
+      }
+      folders.sort((a, b) => (b.name > a.name ? 1 : -1));
+      return { success: true, folders, message: '' };
+    } catch (e) {
+      return { success: false, message: `列表失败: ${e instanceof Error ? e.message : '未知错误'}` };
+    }
+  }
+
+  /**
+   * 列出某日期文件夹 Wing/YYYY-MM-DD/ 下的备份文件（.zip、.json），按修改时间倒序
+   */
+  async listBackupFilesInFolder(folder: string): Promise<{ success: boolean; files?: { name: string; lastModified: number }[]; message: string }> {
+    try {
+      const dirUrl = this.getFullPath(folder);
+      const propfindXml = `<?xml version="1.0" encoding="utf-8"?><propfind xmlns="DAV:"><prop><getlastmodified/><resourcetype/></prop></propfind>`;
+      const res = await fetch(dirUrl, {
+        method: 'PROPFIND',
+        headers: {
+          Authorization: this.getAuthHeader(),
+          Depth: '1',
+          'Content-Type': 'application/xml; charset=utf-8',
+          ...this.getProxyHeaderIfNeeded(dirUrl)
+        },
+        body: propfindXml
+      });
+      if (res.status === 401 || res.status === 403) return { success: false, message: '认证失败，请检查用户名和密码' };
+      if (res.status === 404) return { success: true, files: [], message: '' };
+      if (res.status !== 207 && (res.status < 200 || res.status >= 300)) return { success: false, message: `列表失败: HTTP ${res.status}` };
+      const text = await res.text();
+      const files: { name: string; lastModified: number }[] = [];
+      const blockRe = /<[a-z]:?response[^>]*>([\s\S]*?)<\/[a-z]:?response>/gi;
+      const hrefRe = /<[a-z]:?href>([^<]*)<\/[a-z]:?href>/i;
+      const modRe = /<[a-z]:?getlastmodified>([^<]*)<\/[a-z]:?getlastmodified>/i;
+      const collRe = /<[a-z]:?collection\s*\/>/i;
+      let m: RegExpExecArray | null;
+      while ((m = blockRe.exec(text)) !== null) {
+        const block = m[1];
+        if (collRe.test(block)) continue;
+        const hrefM = hrefRe.exec(block);
+        const modM = modRe.exec(block);
+        if (!hrefM) continue;
+        const href = decodeURIComponent(hrefM[1].replace(/^\s+|\s+$/g, ''));
+        const segments = href.split('/').filter(Boolean);
+        const name = segments[segments.length - 1] || '';
+        if (!name.toLowerCase().endsWith('.zip') && !name.toLowerCase().endsWith('.json')) continue;
+        const lastModified = modM ? (Date.parse(modM[1].trim()) || 0) : 0;
+        files.push({ name, lastModified });
+      }
+      files.sort((a, b) => b.lastModified - a.lastModified);
+      return { success: true, files, message: '' };
+    } catch (e) {
+      return { success: false, message: `列表失败: ${e instanceof Error ? e.message : '未知错误'}` };
+    }
+  }
+
+  /**
    * 列出云盘 Wing 目录下的备份文件（.zip、.json），按修改时间倒序
-   * 与本地导出一致：ZIP 为 data.json + images/，.json 为旧版格式
+   * @deprecated 推荐使用 listBackupFolders + listBackupFilesInFolder 按日期文件夹选择
    */
   async listBackupFiles(): Promise<{ success: boolean; files?: { name: string; lastModified: number }[]; message: string }> {
     try {
@@ -425,34 +563,27 @@ export class WebDAVService {
   }
 
   /**
-   * 从云盘下载备份文件，返回 File 供 dataService.replaceData/importData 使用
-   * 与本地导入一致：支持 .zip（data.json + images/）与 .json
+   * 从云盘下载备份文件，返回 File。fileName 可带子路径如 2025-01-15/wing-backup-2025-01-15.zip
    */
   async downloadBackupFile(fileName: string): Promise<{ success: boolean; file?: File; message: string }> {
     try {
       const url = this.getFullPath(fileName);
       const response = await fetch(url, {
         method: 'GET',
-        headers: { 'Authorization': this.getAuthHeader(), ...this.getProxyHeaderIfNeeded(url) }
+        headers: { Authorization: this.getAuthHeader(), ...this.getProxyHeaderIfNeeded(url) }
       });
       if (response.status === 404) return { success: false, message: '文件不存在' };
-      if (response.status < 200 || response.status >= 300) {
-        return { success: false, message: `下载失败: HTTP ${response.status}` };
-      }
-      const isZip = fileName.toLowerCase().endsWith('.zip');
+      if (response.status < 200 || response.status >= 300) return { success: false, message: `下载失败: HTTP ${response.status}` };
+      const baseName = fileName.includes('/') ? (fileName.split('/').pop() || fileName) : fileName;
+      const isZip = baseName.toLowerCase().endsWith('.zip');
       if (isZip) {
         const blob = await response.blob();
-        const file = new File([blob], fileName, { type: 'application/zip' });
-        return { success: true, file, message: '下载成功' };
+        return { success: true, file: new File([blob], baseName, { type: 'application/zip' }), message: '下载成功' };
       }
       const text = await response.text();
-      const file = new File([text], fileName, { type: 'application/json' });
-      return { success: true, file, message: '下载成功' };
+      return { success: true, file: new File([text], baseName, { type: 'application/json' }), message: '下载成功' };
     } catch (e) {
-      return {
-        success: false,
-        message: `下载失败: ${e instanceof Error ? e.message : '未知错误'}`
-      };
+      return { success: false, message: `下载失败: ${e instanceof Error ? e.message : '未知错误'}` };
     }
   }
 

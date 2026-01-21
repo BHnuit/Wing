@@ -21,7 +21,7 @@ const SettingsStorageView: React.FC = () => {
   const [showClearModal, setShowClearModal] = useState(false);
   const [showRestoreModal, setShowRestoreModal] = useState(false);
   const [restoreMode, setRestoreMode] = useState<'import' | 'replace'>('import');
-  const [restoreSets, setRestoreSets] = useState<{ single: { name: string; lastModified: number }[]; split: { jsonName: string; imageNames: string[]; lastModified: number }[] } | null>(null);
+  const [restoreFolders, setRestoreFolders] = useState<{ name: string; lastModified?: number }[]>([]);
   const [restoreSelected, setRestoreSelected] = useState('');
   const [restoreLoading, setRestoreLoading] = useState(false);
   /** 是否明文显示 WebDAV 密码，默认打码 */
@@ -78,7 +78,13 @@ const SettingsStorageView: React.FC = () => {
 
   /** 备份到云盘：单 ZIP 或分卷上传；若返回 fallbackDownload 则触发下载并提示用户手动上传云盘（方案3 兜底） */
   const handleBackup = async () => {
-    setSyncStatus({ type: 'syncing', message: t('webdav_backuping') });
+    const onProgress = (key: string, extra?: { current?: number; total?: number }) => {
+      const msg = extra != null && extra.current != null && extra.total != null
+        ? `${t(key)} (${extra.current}/${extra.total})`
+        : t(key);
+      setSyncStatus({ type: 'syncing', message: msg });
+    };
+    setSyncStatus({ type: 'syncing', message: t('webdav_backup_preparing') });
     const svc = createWebDAVService(settings);
     if (!svc) {
       setSyncStatus({ type: 'error', message: '请先填写 WebDAV 配置' });
@@ -87,7 +93,7 @@ const SettingsStorageView: React.FC = () => {
     }
     const entries = MockDataService.getEntries();
     const sessions = MockDataService.getSessions();
-    const r = await svc.backupData(entries, sessions);
+    const r = await svc.backupData(entries, sessions, onProgress);
 
     if (r.fallbackDownload) {
       const url = URL.createObjectURL(r.fallbackDownload);
@@ -104,7 +110,7 @@ const SettingsStorageView: React.FC = () => {
     setTimeout(() => setSyncStatus({ type: 'idle' }), 3000);
   };
 
-  /** 打开从云盘导入/替换弹窗：拉取备份列表并分组为单文件/分卷，mode 决定后续 import 或 replace */
+  /** 打开从云盘导入/替换弹窗：拉取按日期命名的备份文件夹列表，mode 决定后续 import 或 replace */
   const handleRestoreOpen = async (mode: 'import' | 'replace') => {
     const svc = createWebDAVService(settings);
     if (!svc) {
@@ -114,24 +120,22 @@ const SettingsStorageView: React.FC = () => {
     setRestoreMode(mode);
     setRestoreLoading(true);
     setShowRestoreModal(true);
-    setRestoreSets(null);
+    setRestoreFolders([]);
     setRestoreSelected('');
-    const r = await svc.listBackupFiles();
+    const r = await svc.listBackupFolders();
     setRestoreLoading(false);
-    if (!r.success || !r.files?.length) {
+    if (!r.success || !r.folders?.length) {
       showToast(r.success ? t('webdav_no_backup') : r.message, 'error');
       setShowRestoreModal(false);
       return;
     }
-    const groups = WebDAVService.groupBackupSets(r.files);
-    setRestoreSets(groups);
-    const first = groups.single[0] ? `single:${groups.single[0].name}` : groups.split[0] ? `split:${groups.split[0].jsonName}` : '';
-    setRestoreSelected(first);
+    setRestoreFolders(r.folders);
+    setRestoreSelected(r.folders[0].name);
   };
 
-  /** 从云盘导入或替换：按选中项下载单文件或分卷，走 importData/replaceData 或 importDataFromSplit/replaceDataFromSplit */
+  /** 从云盘导入或替换：按选中的日期文件夹拉取文件、分组后下载单文件或分卷，再走 import/replace */
   const handleRestoreConfirm = async () => {
-    if (!restoreSelected || !restoreSets) return;
+    if (!restoreSelected) return;
     const confirmMsg = restoreMode === 'replace' ? t('confirm_replace') : t('webdav_import_confirm');
     if (!window.confirm(confirmMsg)) return;
     const svc = createWebDAVService(settings);
@@ -139,16 +143,27 @@ const SettingsStorageView: React.FC = () => {
       showToast('请先填写 WebDAV 配置', 'error');
       return;
     }
-    const set = restoreSelected.startsWith('single:')
-      ? { type: 'single' as const, name: restoreSelected.slice(7) }
-      : {
-          type: 'split' as const,
-          jsonName: restoreSelected.slice(6),
-          imageNames: restoreSets.split.find((s) => s.jsonName === restoreSelected.slice(6))?.imageNames ?? []
-        };
     setSyncStatus({ type: 'syncing', message: restoreMode === 'import' ? t('webdav_importing') : t('webdav_replacing') });
     setShowRestoreModal(false);
-    const down = await svc.downloadBackupSet(set);
+
+    const fr = await svc.listBackupFilesInFolder(restoreSelected);
+    if (!fr.success || !fr.files?.length) {
+      setSyncStatus({ type: 'error', message: fr.success ? t('webdav_folder_empty') : fr.message });
+      setTimeout(() => setSyncStatus({ type: 'idle' }), 3000);
+      return;
+    }
+    const groups = WebDAVService.groupBackupSets(fr.files, restoreSelected);
+    const set = groups.single[0] ?? groups.split[0];
+    if (!set) {
+      setSyncStatus({ type: 'error', message: t('webdav_folder_empty') });
+      setTimeout(() => setSyncStatus({ type: 'idle' }), 3000);
+      return;
+    }
+
+    const downSet = set && 'jsonName' in set
+      ? { type: 'split' as const, folder: set.folder, jsonName: set.jsonName, imageNames: set.imageNames }
+      : { type: 'single' as const, folder: set.folder, name: set.name };
+    const down = await svc.downloadBackupSet(downSet);
     if ('success' in down && down.success === false) {
       setSyncStatus({ type: 'error', message: down.message });
       setTimeout(() => setSyncStatus({ type: 'idle' }), 3000);
@@ -415,7 +430,7 @@ const SettingsStorageView: React.FC = () => {
             className="bg-twilight-cream dark:bg-nocturnal-surface rounded-2xl p-6 max-w-sm w-full mx-4 shadow-xl border border-twilight-divider dark:border-nocturnal-secondary/20"
             onClick={(e) => e.stopPropagation()}
           >
-            <h3 className="serif text-xl font-semibold text-twilight-charcoal dark:text-nocturnal-primary mb-3">{t('webdav_select_backup')}</h3>
+            <h3 className="serif text-xl font-semibold text-twilight-charcoal dark:text-nocturnal-primary mb-3">{t('webdav_select_date')}</h3>
             {restoreLoading ? (
               <div className="flex items-center justify-center gap-2 py-8 text-twilight-duskLight dark:text-nocturnal-secondary">
                 <Loader2 className="animate-spin" size={20} />
@@ -428,20 +443,11 @@ const SettingsStorageView: React.FC = () => {
                   onChange={(e) => setRestoreSelected(e.target.value)}
                   className="w-full bg-twilight-cream/50 dark:bg-nocturnal-bg/70 dark:text-nocturnal-primary border border-twilight-divider dark:border-nocturnal-secondary/25 rounded-xl px-4 py-3 mb-4 focus:outline-none focus:ring-2 focus:ring-twilight-amber/30 dark:focus:ring-nocturnal-accent/40"
                 >
-                  {!restoreSets ? null : (
-                    <>
-                      {restoreSets.single.map((s) => (
-                        <option key={`single:${s.name}`} value={`single:${s.name}`}>
-                          {s.name} ({t('webdav_backup_single')}) {new Date(s.lastModified).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' })}
-                        </option>
-                      ))}
-                      {restoreSets.split.map((s) => (
-                        <option key={`split:${s.jsonName}`} value={`split:${s.jsonName}`}>
-                          {s.jsonName.replace(/\.json$/, '')} ({t('webdav_backup_split')}) {new Date(s.lastModified).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' })}
-                        </option>
-                      ))}
-                    </>
-                  )}
+                  {restoreFolders.map((f) => (
+                    <option key={f.name} value={f.name}>
+                      {f.name}{f.lastModified ? ` (${new Date(f.lastModified).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' })})` : ''}
+                    </option>
+                  ))}
                 </select>
                 <p className="text-[11px] text-twilight-duskLight dark:text-nocturnal-secondary mb-4">
                   {restoreMode === 'replace' ? t('confirm_replace') : t('webdav_import_confirm')}
