@@ -486,7 +486,7 @@ const ChatView: React.FC = () => {
 
       <div className="p-6">
         {fragments.length === 0 ? (
-          <div className="h-[60vh] flex flex-col items-center justify-center text-twilight-duskLight dark:text-nocturnal-secondary space-y-4">
+          <div className="min-h-[calc(100vh-12rem)] flex flex-col items-center justify-center text-twilight-duskLight dark:text-nocturnal-secondary space-y-4">
             <EmptyStateOwl size={100} />
             <div className="flex flex-wrap justify-center gap-2 max-w-md px-4">
               {promptGuides.map((q) => (

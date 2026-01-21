@@ -27,8 +27,8 @@ function getPageFontFamily(pageFont?: string): string {
   }
 }
 
-/** 滚动方向判定阈值（px），避免轻微抖动导致 Tab 栏频繁显隐 */
-const SCROLL_THRESHOLD = 10;
+/** 滚动方向判定阈值（px），过大会导致触控/模拟滑动时单次 delta 不足而不触发；5 在防抖与灵敏度间折中 */
+const SCROLL_THRESHOLD = 5;
 /** 移动端断点（与 Tailwind md 一致），仅在此宽度以下启用 Tab 栏滑动隐藏 */
 const MOBILE_BREAKPOINT = 768;
 
@@ -41,14 +41,14 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const mainRef = useRef<HTMLElement>(null);
   const [tabBarVisible, setTabBarVisible] = useState(true);
   const lastScrollTopRef = useRef(-1);
-  const isMobileRef = useRef(typeof window !== 'undefined' && window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT}px)`).matches);
 
   /**
    * 根据滚动位置与方向更新底部 Tab 栏显隐（仅移动端）。
    * 向下滑动隐藏，向上滑动或接近顶部时显示。
+   * 使用 window.innerWidth 判断，避免设备模拟时 matchMedia 未及时更新。
    */
   const handleScroll = useCallback((scrollTop: number) => {
-    if (!isMobileRef.current) return;
+    if (typeof window === 'undefined' || window.innerWidth >= MOBILE_BREAKPOINT) return;
     const last = lastScrollTopRef.current;
     if (last < 0) {
       lastScrollTopRef.current = scrollTop;
@@ -70,12 +70,10 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     lastScrollTopRef.current = -1;
   }, [location.pathname]);
 
-  /** 监听移动端断点，仅在小屏下启用 Tab 栏滑动隐藏；切回桌面时恢复显示 */
+  /** 监听移动端断点：切回桌面时恢复 Tab 栏显示 */
   useEffect(() => {
     const mq = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT}px)`);
-    isMobileRef.current = mq.matches;
     const onChange = () => {
-      isMobileRef.current = mq.matches;
       if (!mq.matches) setTabBarVisible(true);
     };
     mq.addEventListener('change', onChange);
