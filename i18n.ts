@@ -46,6 +46,8 @@ export const translations = {
     synthesize_btn_that_day: '收拢当日羽毛',
     synthesize_btn_regather: '再次收拢羽毛',
     weaving: '正在收拢…',
+    /** 生成中且展开时，输入框占位语 */
+    owl_gathering_please_wait: '猫头鹰正在收拢羽毛，请稍等',
     gathering_feathers: '正在收拢羽毛',
     gathering_started: '开始收拢羽毛',
     gathering_regather: '再次收拢羽毛',
@@ -275,6 +277,7 @@ export const translations = {
     synthesize_btn_that_day: "Gather that day's feathers",
     synthesize_btn_regather: 'Regather feathers',
     weaving: 'Gathering…',
+    owl_gathering_please_wait: 'The owl is gathering feathers, please wait.',
     gathering_feathers: 'Gathering feathers',
     gathering_started: 'Started gathering feathers',
     gathering_regather: 'Regathering feathers',

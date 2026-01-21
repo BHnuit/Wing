@@ -1,7 +1,6 @@
 
-import React, { useState, useEffect, useRef, useMemo, useContext } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback, useLayoutEffect } from 'react';
 import { Send, CheckCircle2, Image as ImageIcon, Loader2, ChevronLeft, ChevronRight, Infinity } from 'lucide-react';
-import { TabBarScrollContext } from '../contexts/TabBarScrollContext';
 import { EmptyStateOwl, LoadingOwl, OwlLogo } from './OwlAssets';
 import { MockDataService } from '../services/mockDataService';
 import { AiService, AiAPIError, getEffectiveApiKey, getModelResponseLanguage } from '../services/aiService';
@@ -88,7 +87,7 @@ const ChatView: React.FC = () => {
   const [settings, setSettings] = useState(MockDataService.getSettings());
   const t = useTranslation(settings.language);
   const [input, setInput] = useState('');
-  /** 底部输入框是否获得焦点：未聚焦时仅显示占位语、3 行高；聚焦时 5 行高并显示添加图片与发送按钮 */
+  /** 底部输入框是否获得焦点：未聚焦时仅显示占位语、单行高；聚焦时 5 行高并显示添加图片与发送按钮 */
   const [inputFocused, setInputFocused] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
   const [isSynthesizing, setIsSynthesizing] = useState(false);
@@ -110,8 +109,10 @@ const ChatView: React.FC = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const placeholderMeasureRef = useRef<HTMLDivElement>(null);
+  /** 折叠时占位语若超过一行，根据测量结果扩展行数（1–4） */
+  const [collapsedRows, setCollapsedRows] = useState(1);
   const { showToast, ToastContainer } = useToast();
-  const tabBarReportScroll = useContext(TabBarScrollContext)?.reportScroll;
 
   useEffect(() => {
     setSession(MockDataService.getSessionByDate(viewDate) ?? null);
@@ -122,12 +123,16 @@ const ChatView: React.FC = () => {
     if (input.trim()) setInfinityMode(false);
   }, [input]);
 
-  /** 点击文本框外任意区域：退出收拢模式，按钮重新变灰；文本框高度由 onBlur 恢复 */
+  /**
+   * 点击输入框外部：始终折叠（收起高度与按钮栏，仅当 isSynthesizing 时按钮栏保留）；
+   * 仅当不处于日记生成过程中时退出无限模式；生成中不退出，折叠后占位语由 placeholder 显示环节提示。
+   */
   useEffect(() => {
     const handlePointerOutside = (e: MouseEvent | TouchEvent) => {
       const target = e.target as Node | null;
       if (target != null && inputContainerRef.current && !inputContainerRef.current.contains(target)) {
-        setInfinityMode(false);
+        setInputFocused(false);
+        if (!isSynthesizing) setInfinityMode(false);
       }
     };
     document.addEventListener('mousedown', handlePointerOutside);
@@ -136,7 +141,7 @@ const ChatView: React.FC = () => {
       document.removeEventListener('mousedown', handlePointerOutside);
       document.removeEventListener('touchstart', handlePointerOutside);
     };
-  }, []);
+  }, [isSynthesizing]);
 
   /** 随系统日期更新 today：每分钟检查一次，且切回标签页时检查，跨日或重开 App 后能正确显示「今天」 */
   useEffect(() => {
@@ -366,6 +371,46 @@ const ChatView: React.FC = () => {
     [settings.language, viewDate]
   );
 
+  /** 折叠状态下当前占位语文案，用于测量是否需扩展行高 */
+  const collapsedPlaceholder = inputFocused
+    ? ''
+    : (isSynthesizing ? (synthStatus || t('weaving')) : (fragments.length > 0 ? inputPlaceholderQuestion : t('mind_placeholder')));
+
+  /**
+   * 测量折叠时占位语行数：用隐藏 div 同宽、同字体渲染占位语，按 scrollHeight/lineHeight 计算行数并更新 collapsedRows。
+   * 仅当未聚焦且有占位语时执行；行数限制在 1–4。
+   */
+  const runMeasure = useCallback(() => {
+    if (inputFocused || !collapsedPlaceholder || !textareaRef.current || !placeholderMeasureRef.current) return;
+    const ta = textareaRef.current;
+    const m = placeholderMeasureRef.current;
+    if (ta.offsetWidth <= 0) return;
+    const cs = getComputedStyle(ta);
+    m.style.width = `${ta.offsetWidth}px`;
+    m.style.fontSize = cs.fontSize;
+    m.style.lineHeight = cs.lineHeight;
+    m.style.fontFamily = cs.fontFamily;
+    m.style.boxSizing = 'border-box';
+    m.textContent = collapsedPlaceholder;
+    const lineHeight = parseFloat(cs.lineHeight);
+    if (!lineHeight || Number.isNaN(lineHeight)) return;
+    const lines = Math.ceil(m.scrollHeight / lineHeight);
+    setCollapsedRows(Math.max(1, Math.min(lines, 4)));
+  }, [inputFocused, collapsedPlaceholder]);
+
+  useLayoutEffect(() => {
+    runMeasure();
+  }, [runMeasure]);
+
+  /** 折叠时随输入框宽度变化重新测量占位语行数 */
+  useLayoutEffect(() => {
+    const ta = textareaRef.current;
+    if (!ta) return;
+    const ro = new ResizeObserver(runMeasure);
+    ro.observe(ta);
+    return () => ro.disconnect();
+  }, [runMeasure]);
+
   /**
    * 收拢时间线：合并「开始收拢」与「已生成《xx》」，按时间排序；再次生成时多条叠加展示。
    * 旧数据无 gatherCompletions 时，从 finalEntryId 推导一条以保持兼容。
@@ -413,14 +458,14 @@ const ChatView: React.FC = () => {
     : new Date(viewDate + 'T12:00:00').toLocaleDateString(settings.language === 'en' ? 'en-US' : 'zh-CN', { month: 'numeric', day: 'numeric', weekday: 'short' });
 
   return (
-    <div className="flex flex-col h-full bg-twilight-bg dark:bg-nocturnal-bg">
-      {/* 日期切换：亮色卡片色，暗色 nocturnal surface；日期用 accentPurple */}
-      <div className="flex items-center justify-center gap-2 py-3 border-b border-twilight-divider dark:border-nocturnal-secondary/25 bg-twilight-cream dark:bg-nocturnal-surface/80">
+    <div className="flex flex-col bg-twilight-bg dark:bg-nocturnal-bg">
+      {/* 日期切换：sticky 随 main 滚动时固定在顶部，便于 Tab 栏滑动隐藏时仍可切换日期 */}
+      <div className="sticky top-0 z-10 flex items-center justify-center gap-2 py-2 border-b border-twilight-divider dark:border-nocturnal-secondary/25 bg-twilight-cream dark:bg-nocturnal-surface/80">
         <button
           type="button"
           onClick={() => prevDate && setSearchParams({ date: prevDate })}
           disabled={!canGoPrev}
-          className="p-2 text-twilight-duskLight hover:text-twilight-amber hover:bg-twilight-cream dark:text-nocturnal-secondary dark:hover:text-nocturnal-accent dark:hover:bg-nocturnal-surface rounded-full transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-twilight-duskLight dark:disabled:hover:text-nocturnal-secondary"
+          className="p-1.5 text-twilight-duskLight hover:text-twilight-amber hover:bg-twilight-cream dark:text-nocturnal-secondary dark:hover:text-nocturnal-accent dark:hover:bg-nocturnal-surface rounded-full transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-twilight-duskLight dark:disabled:hover:text-nocturnal-secondary"
           aria-label={prevDate ?? undefined}
         >
           <ChevronLeft size={20} />
@@ -432,17 +477,14 @@ const ChatView: React.FC = () => {
           type="button"
           onClick={() => nextDate && setSearchParams({ date: nextDate })}
           disabled={!canGoNext}
-          className="p-2 text-twilight-duskLight hover:text-twilight-amber hover:bg-twilight-cream dark:text-nocturnal-secondary dark:hover:text-nocturnal-accent dark:hover:bg-nocturnal-surface rounded-full disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-twilight-duskLight dark:disabled:hover:text-nocturnal-secondary transition-colors"
+          className="p-1.5 text-twilight-duskLight hover:text-twilight-amber hover:bg-twilight-cream dark:text-nocturnal-secondary dark:hover:text-nocturnal-accent dark:hover:bg-nocturnal-surface rounded-full disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-twilight-duskLight dark:disabled:hover:text-nocturnal-secondary transition-colors"
           aria-label={nextDate ?? undefined}
         >
           <ChevronRight size={20} />
         </button>
       </div>
 
-      <div
-        className="flex-1 min-h-0 overflow-y-auto p-6"
-        onScroll={(e) => tabBarReportScroll?.(e.currentTarget.scrollTop)}
-      >
+      <div className="p-6">
         {fragments.length === 0 ? (
           <div className="h-[60vh] flex flex-col items-center justify-center text-twilight-duskLight dark:text-nocturnal-secondary space-y-4">
             <EmptyStateOwl size={100} />
@@ -612,12 +654,19 @@ const ChatView: React.FC = () => {
         />
         <div ref={inputContainerRef} className="w-full flex flex-col bg-white dark:bg-nocturnal-surface rounded-2xl overflow-hidden border border-twilight-divider/60 dark:border-nocturnal-secondary/25 focus-within:ring-2 focus-within:ring-twilight-amber/25 dark:focus-within:ring-nocturnal-accent/40 focus-within:ring-inset min-h-0">
           <div className="relative flex-1 flex min-h-0">
+            {/* 折叠时测量占位语行数用：与 textarea 同宽、同 px/pr、同字体，用于计算 collapsedRows */}
+            <div
+              ref={placeholderMeasureRef}
+              className="absolute -left-[9999px] top-0 invisible box-border px-4 pr-11 py-0 break-words"
+              aria-hidden="true"
+            />
             <textarea
               ref={textareaRef}
-              rows={inputFocused ? 5 : 3}
+              rows={inputFocused ? 5 : collapsedRows}
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onFocus={() => setInputFocused(true)}
+              readOnly={isSynthesizing}
               onBlur={() => {
                 /** 延迟一帧判断：若焦点仍在输入容器内（如点击了发送/加图按钮），不折叠，避免无法发送或连点/长按进入收拢模式 */
                 const container = inputContainerRef.current;
@@ -627,20 +676,19 @@ const ChatView: React.FC = () => {
                   setInputFocused(false);
                 });
               }}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                  e.preventDefault();
-                  handleSend();
-                }
-              }}
-              placeholder={fragments.length > 0 ? inputPlaceholderQuestion : t('mind_placeholder')}
+              /** 回车与换行仅插入换行，不自动发送；须手动点击发送键才发送。生成中：展开时占位「猫头鹰正在收拢羽毛，请稍等」；折叠时占位为原小字提示语（synthStatus/weaving） */
+              placeholder={
+                isSynthesizing
+                  ? (inputFocused ? t('owl_gathering_please_wait') : (synthStatus || t('weaving')))
+                  : (fragments.length > 0 ? inputPlaceholderQuestion : t('mind_placeholder'))
+              }
               className="w-full bg-transparent border-none resize-none outline-none focus:ring-0 text-twilight-charcoal dark:text-nocturnal-primary px-4 pt-3 pb-2 pr-11 max-h-40 placeholder:text-twilight-duskLight placeholder:dark:text-nocturnal-secondary"
             />
             <div className={`absolute top-3 right-3 transition-all duration-300 ${showSuccess ? 'scale-110 opacity-100' : 'scale-50 opacity-0'}`} aria-hidden="true">
               <CheckCircle2 className="text-green-500" size={20} />
             </div>
           </div>
-          {(inputFocused || isSynthesizing) && (
+          {inputFocused && (
             <div className="flex justify-between items-center px-3 pb-2 pt-0">
               <button
                 type="button"

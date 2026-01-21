@@ -12,7 +12,6 @@ import SettingsLanguageView from './components/SettingsLanguageView';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { MockDataService } from './services/mockDataService';
 import { useTranslation } from './i18n';
-import { TabBarScrollContext } from './contexts/TabBarScrollContext';
 
 /** 根据页面字体设置返回对应的 font-family 值（正文与标题） */
 function getPageFontFamily(pageFont?: string): string {
@@ -120,7 +119,6 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   }, [settings.fontSize]);
 
   return (
-    <TabBarScrollContext.Provider value={{ reportScroll: handleScroll }}>
     <div
       className="min-h-screen max-w-2xl mx-auto flex flex-col bg-twilight-bg dark:bg-nocturnal-bg relative border-x border-twilight-divider dark:border-nocturnal-secondary/25 shadow-sm overflow-hidden"
       data-page-font={settings.pageFont || 'system'}
@@ -147,33 +145,32 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 
       {/* Bottom Nav：移动端滑动时向下隐藏、向上显示，带过渡动画 */}
       {!isDetail && (
-        <nav className={`fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-2xl glass border-t border-twilight-divider dark:border-nocturnal-secondary/25 px-8 py-3 flex justify-around items-center z-50 transition-transform duration-300 ease-out ${tabBarVisible ? 'translate-y-0' : 'translate-y-full'}`}>
+        <nav className={`fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-2xl glass border-t border-twilight-divider dark:border-nocturnal-secondary/25 px-8 py-2 flex justify-around items-center z-50 transition-transform duration-300 ease-out ${tabBarVisible ? 'translate-y-0' : 'translate-y-full'}`}>
           <NavLink 
             to="/" 
-            className={({ isActive }) => `flex flex-col items-center gap-1 transition-colors ${isActive ? 'text-twilight-amber dark:text-nocturnal-accent' : 'text-twilight-duskLight dark:text-nocturnal-secondary'}`}
+            className={({ isActive }) => `flex flex-col items-center gap-0.5 transition-colors ${isActive ? 'text-twilight-amber dark:text-nocturnal-accent' : 'text-twilight-duskLight dark:text-nocturnal-secondary'}`}
           >
-            <MessageSquare size={22} />
+            <MessageSquare size={18} />
             <span className="text-[10px] font-medium uppercase tracking-wider">{t('recording')}</span>
           </NavLink>
           <NavLink 
             to="/journal" 
-            className={({ isActive }) => `flex flex-col items-center gap-1 transition-colors ${isActive ? 'text-twilight-amber dark:text-nocturnal-accent' : 'text-twilight-duskLight dark:text-nocturnal-secondary'}`}
+            className={({ isActive }) => `flex flex-col items-center gap-0.5 transition-colors ${isActive ? 'text-twilight-amber dark:text-nocturnal-accent' : 'text-twilight-duskLight dark:text-nocturnal-secondary'}`}
           >
-            <BookOpen size={22} />
+            <BookOpen size={18} />
             <span className="text-[10px] font-medium uppercase tracking-wider">{t('journals')}</span>
           </NavLink>
           <NavLink 
             to="/settings"
             end={false}
-            className={({ isActive }) => `flex flex-col items-center gap-1 transition-colors ${isActive ? 'text-twilight-amber dark:text-nocturnal-accent' : 'text-twilight-duskLight dark:text-nocturnal-secondary'}`}
+            className={({ isActive }) => `flex flex-col items-center gap-0.5 transition-colors ${isActive ? 'text-twilight-amber dark:text-nocturnal-accent' : 'text-twilight-duskLight dark:text-nocturnal-secondary'}`}
           >
-            <SettingsIcon size={22} />
+            <SettingsIcon size={18} />
             <span className="text-[10px] font-medium uppercase tracking-wider">{t('settings')}</span>
           </NavLink>
         </nav>
       )}
     </div>
-    </TabBarScrollContext.Provider>
   );
 };
 
