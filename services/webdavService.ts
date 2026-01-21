@@ -203,6 +203,12 @@ export class WebDAVService {
       if (response.status === 401 || response.status === 403) {
         return { success: false, message: '认证失败，请检查用户名和密码' };
       }
+      if (response.status === 413) {
+        return { success: false, message: '上传失败：备份文件过大（Netlify 限制约 6MB）。请删除部分日记或图片后重试。' };
+      }
+      if (response.status === 500) {
+        return { success: false, message: '上传失败：HTTP 500。可能是备份包较大、云盘服务异常或网络问题，请删减数据后重试或稍后再试。' };
+      }
       return { success: false, message: `上传失败: HTTP ${response.status}` };
     } catch (error) {
       if (error instanceof TypeError && error.message.includes('fetch')) {
@@ -253,10 +259,18 @@ export class WebDAVService {
 
   /**
    * 备份所有数据到 WebDAV，ZIP 结构与本地导出一致：data.json（文本）+ images/（图片）
+   * 若备份包超过 Netlify 请求体限制（约 6MB），会提前提示，避免上传失败。
    */
   async backupData(entries: WingEntry[], sessions: DailySession[]): Promise<SyncStatus> {
     try {
       const blob = await buildBackupZip(entries, sessions);
+      const FILE_SIZE_LIMIT = 5.5 * 1024 * 1024;
+      if (blob.size > FILE_SIZE_LIMIT) {
+        return {
+          success: false,
+          message: `备份包过大（${(blob.size / 1024 / 1024).toFixed(1)}MB），超过 Netlify 代理约 6MB 限制。请删除部分日记或图片后重试。`
+        };
+      }
       const fileName = `wing-backup-${getLocalDateString()}.zip`;
       return await this.uploadBlob(fileName, blob, 'application/zip');
     } catch (error) {

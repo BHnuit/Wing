@@ -106,14 +106,17 @@ async function openAICompatibleSynthesize(
     fullInput += `\n\n[已生成的日记正文，供重新生成时参考]\n${pg}\n\n【重新生成】content_markdown 必须为**重新撰写**的正文：请对上述原文进行重写、润色或合并当日新记录，**禁止逐字照抄原文**，输出的正文须在表述、结构或详略上与原文有可见差异。todos：从当日记录或上述正文中提取待办，若无则填 []。`;
   }
 
-  const body = {
+  /** 国内不少中转不支持 response_format.json_object，custom 时仅靠 system 约束 JSON */
+  const isCustom = (settings.aiProvider || 'gemini') === 'custom';
+  const body: Record<string, unknown> = {
     model,
     messages: [
       { role: 'system' as const, content: sys },
       { role: 'user' as const, content: fullInput }
     ],
-    response_format: { type: 'json_object' as const }
+    max_tokens: 8192
   };
+  if (!isCustom) body.response_format = { type: 'json_object' as const };
 
   let lastErr: Error | null = null;
   for (let attempt = 0; attempt <= retries; attempt++) {
@@ -127,20 +130,26 @@ async function openAICompatibleSynthesize(
         body: JSON.stringify(body)
       });
 
-      const json = await res.json().catch(() => ({}));
+      const json = await res.json().catch(() => ({})) as Record<string, unknown>;
       if (!res.ok) {
-        const msg = (json.error?.message || json.message || res.statusText) || `HTTP ${res.status}`;
-        throw new AiAPIError(msg, json.error?.code || 'API_ERROR', res.status);
+        const msg = (json.msg as string) || (json.err_msg as string) || (typeof json.error === 'string' ? json.error : null)
+          || (json.error && typeof (json.error as { message?: string }).message === 'string' ? (json.error as { message?: string }).message : null)
+          || (json.message as string) || res.statusText || `HTTP ${res.status}`;
+        throw new AiAPIError(msg, (json.error as { code?: string })?.code || 'API_ERROR', res.status);
       }
 
-      const content = json.choices?.[0]?.message?.content;
-      if (!content || typeof content !== 'string') {
+      const content = json.choices?.[0] && typeof (json.choices[0] as { message?: { content?: unknown } }).message?.content === 'string'
+        ? (json.choices[0] as { message: { content: string } }).message.content
+        : null;
+      if (!content) {
         throw new AiAPIError('接口返回为空或格式异常', 'EMPTY_RESPONSE');
       }
 
+      /** 兼容部分中转返回 ```json ... ``` 包裹 */
+      const raw = String(content).trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
       let result: Record<string, unknown>;
       try {
-        result = JSON.parse(content);
+        result = JSON.parse(raw) as Record<string, unknown>;
       } catch {
         throw new AiAPIError('接口返回不是合法 JSON', 'PARSE_ERROR');
       }
@@ -211,15 +220,17 @@ async function* openAICompatibleSynthesizeStream(
     fullInput += `\n\n[已生成的日记正文，供重新生成时参考]\n${pg}\n\n【重新生成】content_markdown 必须为**重新撰写**的正文：请对上述原文进行重写、润色或合并当日新记录，**禁止逐字照抄原文**，输出的正文须在表述、结构或详略上与原文有可见差异。todos：从当日记录或上述正文中提取待办，若无则填 []。`;
   }
 
-  const body = {
+  const isCustom = (settings.aiProvider || 'gemini') === 'custom';
+  const body: Record<string, unknown> = {
     model,
     messages: [
       { role: 'system' as const, content: sys },
       { role: 'user' as const, content: fullInput }
     ],
     stream: true,
-    response_format: { type: 'json_object' as const }
+    max_tokens: 8192
   };
+  if (!isCustom) body.response_format = { type: 'json_object' as const };
 
   let lastErr: Error | null = null;
   for (let attempt = 0; attempt <= retries; attempt++) {
@@ -234,9 +245,11 @@ async function* openAICompatibleSynthesizeStream(
       });
 
       if (!res.ok) {
-        const json = await res.json().catch(() => ({}));
-        const msg = (json?.error?.message || json?.message || res.statusText) || `HTTP ${res.status}`;
-        throw new AiAPIError(msg, json?.error?.code || 'API_ERROR', res.status);
+        const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+        const msg = (json.msg as string) || (json.err_msg as string) || (typeof json.error === 'string' ? json.error : null)
+          || (json.error && typeof (json.error as { message?: string }).message === 'string' ? (json.error as { message?: string }).message : null)
+          || (json.message as string) || res.statusText || `HTTP ${res.status}`;
+        throw new AiAPIError(msg, (json.error as { code?: string })?.code || 'API_ERROR', res.status);
       }
 
       const reader = res.body?.getReader();
@@ -324,13 +337,17 @@ async function openAICompatibleRegenerateInsight(
     })
   });
 
-  const json = await res.json().catch(() => ({}));
+  const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
   if (!res.ok) {
-    const msg = json?.error?.message || json?.message || res.statusText || `HTTP ${res.status}`;
-    throw new AiAPIError(msg, json?.error?.code || 'API_ERROR', res.status);
+    const msg = (json.msg as string) || (json.err_msg as string) || (typeof json.error === 'string' ? json.error : null)
+      || (json.error && typeof (json.error as { message?: string }).message === 'string' ? (json.error as { message?: string }).message : null)
+      || (json.message as string) || res.statusText || `HTTP ${res.status}`;
+    throw new AiAPIError(msg, (json.error as { code?: string })?.code || 'API_ERROR', res.status);
   }
 
-  const text = (json?.choices?.[0]?.message?.content || '').trim().replace(/^["']|["']$/g, '');
+  const text = (json?.choices?.[0] && (json.choices[0] as { message?: { content?: string } })?.message?.content
+    ? (json.choices[0] as { message: { content: string } }).message.content
+    : '').trim().replace(/^["']|["']$/g, '');
   if (!text) throw new AiAPIError('接口返回为空', 'EMPTY_RESPONSE');
   return text;
 }
@@ -409,34 +426,38 @@ export const AiService = {
     const useStream = opts?.stream !== false;
 
     if (USE_AI_PROXY) {
+      /** 504 时对用户友好的提示（Netlify 默认 10s 超时） */
+      const MSG_504_SYNTH = '请求超时 (504)：合成耗时超过服务器限制（约 10 秒）。建议：缩短当日记录、换用更快模型（如 gemini-2.0-flash），或升级 Netlify Pro 将超时延至 26 秒。可重试一次。';
       /** 代理请求体剔除 imageData，避免 base64 图片导致 payload 超限（Vercel ~4.5MB、Netlify ~6MB），合成逻辑仅用 id/content/timestamp/type/editedAt；图片由前端在生成后写入 entry.images */
       const fragmentsForProxy = fragments.map(({ imageData, ...f }) => f);
-      const res = await fetch(AI_PROXY_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'synthesize',
-          stream: useStream,
-          provider,
-          apiKey: getEffectiveApiKey(settings),
-          baseUrl: provider === 'custom' ? (settings.aiBaseUrl || '').trim() : undefined,
-          model: getModel(settings),
-          lang,
-          fragments: fragmentsForProxy,
-          previousGeneration,
-          writingStyle: settings.writingStyle,
-          writingStylePrompt: settings.writingStylePrompt,
-          insightPrompt: settings.insightPrompt
-        })
-      });
-
+      const body = {
+        action: 'synthesize',
+        stream: useStream,
+        provider,
+        apiKey: getEffectiveApiKey(settings),
+        baseUrl: provider === 'custom' ? (settings.aiBaseUrl || '').trim() : undefined,
+        model: getModel(settings),
+        lang,
+        fragments: fragmentsForProxy,
+        previousGeneration,
+        writingStyle: settings.writingStyle,
+        writingStylePrompt: settings.writingStylePrompt,
+        insightPrompt: settings.insightPrompt
+      };
+      let res: Response;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        res = await fetch(AI_PROXY_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        if (res.status !== 504 || attempt === 1) break;
+        await new Promise((r) => setTimeout(r, 1000));
+      }
       const ct = (res.headers.get('Content-Type') || '').toLowerCase();
       if (useStream && ct.includes('text/event-stream')) {
         const dec = new TextDecoder();
         const reader = res.body?.getReader();
         if (!reader) {
           const j = (await res.json().catch(() => ({}))) as { error?: string; code?: string };
-          if (!res.ok) throw new AiAPIError(j.error || res.statusText || `请求失败 (HTTP ${res.status})`, j.code, res.status);
+          const msg = res.status === 504 ? MSG_504_SYNTH : (j.error || res.statusText || `请求失败 (HTTP ${res.status})`);
+          if (!res.ok) throw new AiAPIError(msg, res.status === 504 ? 'TIMEOUT' : j.code, res.status);
           return j as Partial<WingEntry>;
         }
         let buf = '';
@@ -475,7 +496,10 @@ export const AiService = {
       }
 
       const data = (await res.json().catch(() => ({}))) as Partial<WingEntry> & { error?: string; code?: string };
-      if (!res.ok) throw new AiAPIError(data.error || res.statusText || `请求失败 (HTTP ${res.status})`, data.code, res.status);
+      if (!res.ok) {
+        const msg = res.status === 504 ? MSG_504_SYNTH : (data.error || res.statusText || `请求失败 (HTTP ${res.status})`);
+        throw new AiAPIError(msg, res.status === 504 ? 'TIMEOUT' : data.code, res.status);
+      }
       let entry = data;
       // 代理端 synthesize 已用 skipInsight 仅做正文，此处单独请求洞察以规避 Netlify 10s 超时；失败则留空，用户可于详情页「仅重新生成洞察」
       if ((entry.aiInsights == null || entry.aiInsights === '') && (entry.title != null || (entry.markdownContent != null && String(entry.markdownContent).trim() !== ''))) {
@@ -580,7 +604,10 @@ export const AiService = {
         })
       });
       const data = (await res.json().catch(() => ({}))) as { text?: string; error?: string; code?: string };
-      if (!res.ok) throw new AiAPIError(data.error || res.statusText || `请求失败 (HTTP ${res.status})`, data.code, res.status);
+      if (!res.ok) {
+        const msg = res.status === 504 ? '请求超时 (504)，请稍后重试。' : (data.error || res.statusText || `请求失败 (HTTP ${res.status})`);
+        throw new AiAPIError(msg, res.status === 504 ? 'TIMEOUT' : data.code, res.status);
+      }
       return data.text ?? '';
     }
 

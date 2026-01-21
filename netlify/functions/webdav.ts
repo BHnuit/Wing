@@ -101,21 +101,27 @@ export const handler = async (event: NetlifyEvent): Promise<NetlifyResponse> => 
     };
   }
 
-  const targetBase = normalizeBaseUrl(baseUrl);
-  const targetUrl = targetBase + relativePath;
-
-  let body: string | Buffer | undefined;
-  if (event.body) {
-    if (event.isBase64Encoded) {
-      body = Buffer.from(event.body, 'base64');
-    } else {
-      body = event.body;
-    }
-  }
-
-  const forwardHeaders = buildForwardHeaders(event);
-
   try {
+    const targetBase = normalizeBaseUrl(baseUrl);
+    const targetUrl = targetBase + relativePath;
+
+    const rawCt = headers['content-type'] ?? headers['Content-Type'];
+    const ct = (typeof rawCt === 'string' ? rawCt : (Array.isArray(rawCt) ? rawCt[0] : '')) || '';
+
+    let body: string | Buffer | undefined;
+    if (event.body) {
+      if (event.isBase64Encoded) {
+        body = Buffer.from(event.body, 'base64');
+      } else if (typeof event.body === 'string' && /application\/zip|application\/octet-stream/i.test(ct)) {
+        /** 部分 Netlify 环境下二进制 body 可能未设置 isBase64Encoded，按 latin1 按字节恢复以避免云盘收到乱码导致 500 */
+        body = Buffer.from(event.body, 'latin1');
+      } else {
+        body = event.body;
+      }
+    }
+
+    const forwardHeaders = buildForwardHeaders(event);
+
     const res = await fetch(targetUrl, {
       method,
       headers: forwardHeaders,
@@ -126,8 +132,8 @@ export const handler = async (event: NetlifyEvent): Promise<NetlifyResponse> => 
     let outBody: string;
     let isBase64 = false;
 
-    const ct = res.headers.get('content-type') || '';
-    const isLikelyBinary = /octet-stream|zip|image|pdf/i.test(ct) || (res.headers.get('content-length') && parseInt(res.headers.get('content-length')!, 10) > 64 * 1024);
+    const resCt = res.headers.get('content-type') || '';
+    const isLikelyBinary = /octet-stream|zip|image|pdf/i.test(resCt) || (res.headers.get('content-length') && parseInt(res.headers.get('content-length')!, 10) > 64 * 1024);
 
     if (isLikelyBinary) {
       const buf = await res.arrayBuffer();
@@ -140,10 +146,11 @@ export const handler = async (event: NetlifyEvent): Promise<NetlifyResponse> => 
     return { statusCode: res.status, headers: outHeaders, body: outBody, isBase64Encoded: isBase64 };
   } catch (err) {
     const msg = err instanceof Error ? err.message : '未知错误';
+    const status = err instanceof TypeError && /fetch|network/i.test(msg) ? 502 : 500;
     return {
-      statusCode: 502,
+      statusCode: status,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ error: 'WebDAV 代理请求失败', detail: msg })
+      body: JSON.stringify({ error: status === 502 ? 'WebDAV 代理请求失败' : 'WebDAV 代理内部错误', detail: msg })
     };
   }
 };

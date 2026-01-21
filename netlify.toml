@@ -1,5 +1,6 @@
-# AI 函数 (/api/ai)：Netlify 默认 10 秒超时。若出现 504 或「请求失败 (HTTP 504)」，
-# 多为合成超时：可减少当日记录长度，或改用更快模型（如 gemini-2.0-flash）。Pro 可联系支持延至 26s。
+# AI 函数 (/api/ai)：Netlify 默认 10 秒超时。若出现 504 或「请求超时 (504)」：
+# - 建议：缩短当日记录、换用更快模型（如 gemini-2.0-flash）
+# - Netlify Pro：可联系支持将函数超时延至 26 秒（在站点 Functions 设置或支持工单中配置）
 
 [build]
   # 构建命令
@@ -21,6 +22,7 @@
 
 # WebDAV 代理：/api/webdav/* -> Netlify Function，在服务端转发以规避浏览器 CORS
 # 使用 :splat 将路径通过 query 传入，避免 rewrite 后 event.path 在部分环境下丢失；force 避免被静态资源抢占
+# 注意：请求体限制约 6MB，备份 ZIP 过大会导致 413/500；客户端已做 5.5MB 预检提示
 [[redirects]]
   from = "/api/webdav/*"
   to = "/.netlify/functions/webdav?path=:splat"

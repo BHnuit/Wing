@@ -161,7 +161,9 @@ export const GeminiService = {
           config: {
             systemInstruction: getSystemInstructionForSynthesis(lang, { writingStyle, writingStylePrompt }),
             responseMimeType: "application/json",
-            responseSchema: WING_SYNTHESIS_SCHEMA
+            responseSchema: WING_SYNTHESIS_SCHEMA,
+            /** 限制输出长度以降低长文生成导致的 504 超时（如 Netlify 10s） */
+            maxOutputTokens: 8192
           }
         });
 
@@ -254,7 +256,9 @@ export const GeminiService = {
           config: {
             systemInstruction: getSystemInstructionForSynthesis(lang, { writingStyle, writingStylePrompt }),
             responseMimeType: "application/json",
-            responseSchema: WING_SYNTHESIS_SCHEMA
+            responseSchema: WING_SYNTHESIS_SCHEMA,
+            /** 限制输出长度以降低 504 超时概率 */
+            maxOutputTokens: 8192
           }
         });
 
@@ -364,9 +368,11 @@ export function parseSynthesisResult(
   previousGeneration: string | undefined,
   fragments: RawFragment[]
 ): Partial<WingEntry> {
+  /** 兼容国内中转等返回 ```json ... ``` 包裹 */
+  const raw = String(rawText || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
   let result: Record<string, unknown>;
   try {
-    result = JSON.parse(rawText);
+    result = JSON.parse(raw) as Record<string, unknown>;
   } catch {
     throw new GeminiAPIError(
       'Failed to parse API response. The response may not be valid JSON.',
