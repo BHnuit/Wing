@@ -92,6 +92,8 @@ const ChatView: React.FC = () => {
   const [inputFocused, setInputFocused] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
   const [isSynthesizing, setIsSynthesizing] = useState(false);
+  /** 收拢过程各环节提示语，显示在输入框区域 */
+  const [synthStatus, setSynthStatus] = useState<string | null>(null);
   /** 长按发送键 2 秒后进入收拢模式，按钮显示 ♾️，再次点击触发收拢 */
   const [infinityMode, setInfinityMode] = useState(false);
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -262,90 +264,69 @@ const ChatView: React.FC = () => {
       return;
     }
     setInfinityMode(false);
-    /** 本次触发收拢的时间写入当日会话，再次生成会追加 */
+    /** 本次触发收拢的时间写入当日会话，再次生成会追加；不在此处触发 WebDAV，等日记全部生成并展示「已生成」后再同步 */
     const next = { ...session, gatherStartedAt: [...(session.gatherStartedAt ?? []), Date.now()] };
     MockDataService.saveSession(next);
     setSession(MockDataService.getSessionByDate(viewDate)!);
-    triggerRealtimeSyncIfEnabled(settings);
     setIsSynthesizing(true);
+    const isRegather = session.status === SessionStatus.COMPLETED && !!session.finalEntryId;
+    const oldEntry = isRegather ? MockDataService.getEntryById(session.finalEntryId!) : null;
+    const previousGeneration = (isRegather && oldEntry?.markdownContent) ? oldEntry.markdownContent : undefined;
+    const lang = getModelResponseLanguage(settings);
+
     try {
-      /** 再次收拢：当日已有日记则新建一篇（传入旧正文供 AI 参考），不覆盖原日记 */
-      if (session.status === SessionStatus.COMPLETED && session.finalEntryId) {
-        const entry = MockDataService.getEntryById(session.finalEntryId);
-        if (entry) {
-          const previousGeneration = entry.markdownContent;
-          const synthesized = await AiService.synthesizeJournal(
-            session.fragments,
-            getModelResponseLanguage(settings),
-            settings,
-            2,
-            previousGeneration
-          );
-          const images: { [key: string]: string } = {};
-          session.fragments.forEach((f) => {
-            if (f.type === FragmentType.IMAGE && (f.imageData || entry.images?.[f.id]))
-              images[f.id] = f.imageData || entry.images![f.id];
-          });
-          const completedAt = Date.now();
-          const newEntry: WingEntry = {
-            id: crypto.randomUUID(),
-            title: synthesized.title ?? entry.title,
-            summary: synthesized.summary ?? entry.summary,
-            mood: synthesized.mood ?? entry.mood,
-            markdownContent: (synthesized.markdownContent != null && String(synthesized.markdownContent).trim() !== '')
-              ? synthesized.markdownContent
-              : (entry.markdownContent ?? (entry as { content?: string }).content ?? ''),
-            aiInsights: synthesized.aiInsights ?? entry.aiInsights,
-            todos: (synthesized.todos && synthesized.todos.length > 0) ? synthesized.todos : (entry.todos || []),
-            createdAt: new Date(viewDate + 'T12:00:00').getTime(),
-            generatedAt: completedAt,
-            images: Object.keys(images).length > 0 ? images : undefined
-          };
-          MockDataService.saveEntry(newEntry);
-          const latest = MockDataService.getSessionByDate(viewDate)!;
-          MockDataService.saveSession({
-            ...latest,
-            finalEntryId: newEntry.id,
-            gatherCompletions: [...(latest.gatherCompletions ?? []), { completedAt, entryId: newEntry.id, title: newEntry.title }]
-          });
-          setSession(MockDataService.getSessionByDate(viewDate)!);
-          triggerRealtimeSyncIfEnabled(settings);
-          return;
-        }
-      }
+      setSynthStatus(isRegather ? t('synth_status_regather') : t('synth_status_start'));
+      setSynthStatus(t('synth_status_preparing'));
+      setSynthStatus(t('synth_status_body'));
+      const { markdownContent } = await AiService.synthesizeJournalBody(session.fragments, lang, settings, 2, previousGeneration);
 
-      /** 首次收拢：新建日记 */
-      const synthesizedData = await AiService.synthesizeJournal(session.fragments, getModelResponseLanguage(settings), settings);
-
+      setSynthStatus(t('synth_status_creating').replace('{date}', viewDate));
       const images: { [key: string]: string } = {};
       session.fragments.forEach((f) => {
-        if (f.type === FragmentType.IMAGE && f.imageData) images[f.id] = f.imageData;
+        if (f.type === FragmentType.IMAGE) {
+          const data = f.imageData || (isRegather ? oldEntry?.images?.[f.id] : undefined);
+          if (data) images[f.id] = data;
+        }
       });
-
+      const tempTitle = t('synth_temp_title').replace('{date}', viewDate);
       const newEntry: WingEntry = {
         id: crypto.randomUUID(),
-        title: synthesizedData.title || t('untitled'),
-        summary: synthesizedData.summary || '',
-        mood: synthesizedData.mood || '🌿',
-        markdownContent: synthesizedData.markdownContent || '',
-        aiInsights: synthesizedData.aiInsights || '',
-        todos: synthesizedData.todos || [],
+        title: tempTitle,
+        summary: '',
+        mood: '🌿',
+        markdownContent: markdownContent || '',
+        aiInsights: '',
+        todos: [],
         createdAt: new Date(viewDate + 'T12:00:00').getTime(),
         generatedAt: Date.now(),
         images: Object.keys(images).length > 0 ? images : undefined
       };
-
       MockDataService.saveEntry(newEntry);
-      const completedAt = Date.now();
-      const latestForFirst = MockDataService.getSessionByDate(viewDate)!;
-      const updatedSession = {
-        ...latestForFirst,
-        status: SessionStatus.COMPLETED,
-        finalEntryId: newEntry.id,
-        gatherCompletions: [...(latestForFirst.gatherCompletions ?? []), { completedAt, entryId: newEntry.id, title: newEntry.title }]
-      };
-      MockDataService.saveSession(updatedSession);
+      const latest1 = MockDataService.getSessionByDate(viewDate)!;
+      MockDataService.saveSession({ ...latest1, status: SessionStatus.COMPLETED, finalEntryId: newEntry.id });
       setSession(MockDataService.getSessionByDate(viewDate)!);
+
+      setSynthStatus(t('synth_status_meta'));
+      const meta = await AiService.synthesizeJournalMeta(markdownContent, lang, settings);
+      MockDataService.updateEntry(newEntry.id, { title: meta.title, summary: meta.summary, mood: meta.mood });
+
+      setSynthStatus(t('synth_status_insight'));
+      const { aiInsights, todos } = await AiService.synthesizeInsightAndTodos(
+        { title: meta.title, mood: meta.mood, summary: meta.summary, markdownContent },
+        lang,
+        settings
+      );
+      MockDataService.updateEntry(newEntry.id, { aiInsights, todos });
+
+      setSynthStatus(t('synth_status_done'));
+      const completedAt = Date.now();
+      const latest2 = MockDataService.getSessionByDate(viewDate)!;
+      MockDataService.saveSession({
+        ...latest2,
+        gatherCompletions: [...(latest2.gatherCompletions ?? []), { completedAt, entryId: newEntry.id, title: meta.title }]
+      });
+      setSession(MockDataService.getSessionByDate(viewDate)!);
+      /** 仅在收拢完成、展示「已生成《xx》」之后触发 WebDAV 同步，避免网络拥堵 */
       triggerRealtimeSyncIfEnabled(settings);
     } catch (error) {
       console.error('Synthesis failed:', error);
@@ -366,6 +347,7 @@ const ChatView: React.FC = () => {
       showToast(errorMessage, 'error');
     } finally {
       setIsSynthesizing(false);
+      setSynthStatus(null);
     }
   };
 
@@ -658,24 +640,30 @@ const ChatView: React.FC = () => {
               <CheckCircle2 className="text-green-500" size={20} />
             </div>
           </div>
-          {inputFocused && (
+          {(inputFocused || isSynthesizing) && (
             <div className="flex justify-between items-center px-3 pb-2 pt-0">
               <button
                 type="button"
-                onClick={() => fileInputRef.current?.click()}
-                className="p-2 text-twilight-duskLight hover:text-twilight-amber hover:bg-twilight-cream/50 dark:text-nocturnal-secondary dark:hover:text-nocturnal-accent dark:hover:bg-nocturnal-bg/50 rounded-lg transition-colors"
+                onClick={() => !isSynthesizing && fileInputRef.current?.click()}
+                disabled={isSynthesizing}
+                className="p-2 text-twilight-duskLight hover:text-twilight-amber hover:bg-twilight-cream/50 dark:text-nocturnal-secondary dark:hover:text-nocturnal-accent dark:hover:bg-nocturnal-bg/50 rounded-lg transition-colors disabled:opacity-50 disabled:pointer-events-none"
                 title={t('add_image')}
                 aria-label={t('add_image')}
               >
                 <ImageIcon size={20} />
               </button>
-              <div className="flex items-center gap-2">
-                {!input.trim() && fragments.length > 0 && !infinityMode && !isSynthesizing && (
+              <div className="flex items-center gap-2 min-w-0">
+                {isSynthesizing && (
+                  <span className="text-[0.625rem] text-twilight-amber dark:text-nocturnal-accent truncate max-w-[12rem]">
+                    {synthStatus || t('weaving')}
+                  </span>
+                )}
+                {!isSynthesizing && !input.trim() && fragments.length > 0 && !infinityMode && (
                   <span className="text-[0.625rem] text-twilight-duskLight dark:text-nocturnal-secondary whitespace-nowrap">
                     {t('hint_longpress_switch_ai')}
                   </span>
                 )}
-                {infinityMode && !isSynthesizing && (
+                {!isSynthesizing && infinityMode && (
                   <span className="text-[0.625rem] text-twilight-duskLight dark:text-nocturnal-secondary whitespace-nowrap">
                     {isCompleted && session?.finalEntryId
                       ? (viewDate === today ? t('hint_click_regenerate_today') : t('hint_click_regenerate_that_day'))

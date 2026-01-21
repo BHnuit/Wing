@@ -208,7 +208,19 @@ export const translations = {
     hint_click_generate_today: '点击生成今天的日记',
     hint_click_regenerate_today: '点击再次生成今天的日记',
     hint_click_generate_that_day: '点击生成当天的日记',
-    hint_click_regenerate_that_day: '点击再次生成当天的日记'
+    hint_click_regenerate_that_day: '点击再次生成当天的日记',
+    /** 收拢过程状态（展示在输入框区域） */
+    synth_status_start: '开始收拢羽毛',
+    synth_status_regather: '再次收拢羽毛',
+    synth_status_preparing: '整理碎片为请求信息',
+    synth_status_body: '正在生成正文…',
+    synth_status_creating: '正在创建日记《{date} 生成中》',
+    synth_status_meta: '正在生成标题、摘要、心情…',
+    synth_status_insight: '正在生成洞察和待办…',
+    synth_status_done: '日记已生成',
+    synth_status_syncing: '正在同步到云盘…',
+    /** 创建日记时的临时标题，{date} 为 YYYY-MM-DD */
+    synth_temp_title: '《{date} 生成中》'
   },
   en: {
     recording: 'Recording',
@@ -411,7 +423,17 @@ export const translations = {
     hint_click_generate_today: "Tap to generate today's journal",
     hint_click_regenerate_today: "Tap to regenerate today's journal",
     hint_click_generate_that_day: "Tap to generate that day's journal",
-    hint_click_regenerate_that_day: "Tap to regenerate that day's journal"
+    hint_click_regenerate_that_day: "Tap to regenerate that day's journal",
+    synth_status_start: 'Gathering feathers',
+    synth_status_regather: 'Regathering feathers',
+    synth_status_preparing: 'Preparing fragments for request',
+    synth_status_body: 'Generating body…',
+    synth_status_creating: 'Creating journal《{date} Generating》',
+    synth_status_meta: 'Generating title, summary, mood…',
+    synth_status_insight: 'Generating insight and todos…',
+    synth_status_done: 'Journal ready',
+    synth_status_syncing: 'Syncing to cloud…',
+    synth_temp_title: '《{date} Generating》'
   }
 };
 

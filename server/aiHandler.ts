@@ -36,7 +36,7 @@ function buildSettings(p: {
   } as AppSettings;
 }
 
-export type AiProxyAction = 'synthesize' | 'regenerateInsight' | 'test';
+export type AiProxyAction = 'synthesize' | 'synthesizeBody' | 'synthesizeMeta' | 'synthesizeInsightAndTodos' | 'regenerateInsight' | 'test';
 
 export interface AiProxyBody {
   action: AiProxyAction;
@@ -47,14 +47,17 @@ export interface AiProxyBody {
   lang?: Language;
   /** synthesize：为 true 且代理支持时以 SSE 流式返回，降低 TTFB */
   stream?: boolean;
-  /** synthesize */
+  /** synthesize、synthesizeBody */
   fragments?: RawFragment[];
   previousGeneration?: string;
-  /** 文风与自定义提示词（synthesize 时生效） */
+  /** 文风与自定义提示词（synthesize、synthesizeBody 时生效） */
   writingStyle?: WritingStyle;
   writingStylePrompt?: string;
-  /** regenerateInsight */
+  /** synthesizeMeta */
+  markdownContent?: string;
+  /** synthesizeInsightAndTodos */
   entry?: { title?: string; mood?: string; summary?: string; markdownContent?: string };
+  /** regenerateInsight、synthesizeInsightAndTodos */
   insightPrompt?: string;
 }
 
@@ -142,6 +145,39 @@ export async function handleAiRequest(body: AiProxyBody): Promise<AiProxyResult>
           typeof previousGeneration === 'string' ? previousGeneration : undefined,
           { skipInsight: true }
         );
+        return { status: 200, data: ret };
+      }
+
+      case 'synthesizeBody': {
+        const { fragments, previousGeneration } = body;
+        if (!Array.isArray(fragments)) {
+          return { status: 400, error: 'synthesizeBody 需要 fragments 数组' };
+        }
+        const ret = await AiService.synthesizeJournalBody(
+          fragments,
+          lang,
+          settings,
+          2,
+          typeof previousGeneration === 'string' ? previousGeneration : undefined
+        );
+        return { status: 200, data: ret };
+      }
+
+      case 'synthesizeMeta': {
+        const { markdownContent } = body;
+        if (markdownContent == null || typeof markdownContent !== 'string') {
+          return { status: 400, error: 'synthesizeMeta 需要 markdownContent' };
+        }
+        const ret = await AiService.synthesizeJournalMeta(markdownContent, lang, settings);
+        return { status: 200, data: ret };
+      }
+
+      case 'synthesizeInsightAndTodos': {
+        const { entry } = body;
+        if (!entry || typeof entry !== 'object') {
+          return { status: 400, error: 'synthesizeInsightAndTodos 需要 entry 对象' };
+        }
+        const ret = await AiService.synthesizeInsightAndTodos(entry, lang, settings);
         return { status: 200, data: ret };
       }
 

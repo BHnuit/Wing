@@ -77,6 +77,63 @@ const WING_SYNTHESIS_SCHEMA = {
   required: ["title", "mood", "summary", "content_markdown", "todos"]
 };
 
+/** 仅生成日记正文的 Schema，用于三步合成第一步以降低单次请求超时 */
+const BODY_ONLY_SCHEMA = {
+  type: Type.OBJECT,
+  properties: {
+    content_markdown: { type: Type.STRING, description: "使用 Markdown 撰写的第一人称日记正文；若输入中有 [Image]，须在正文对应位置保留 [Image]，数量与输入一致" }
+  },
+  required: ["content_markdown"]
+};
+
+/** 仅生成正文用的系统提示：只要求 content_markdown */
+export const getSystemInstructionForBodyOnly = (
+  lang: Language,
+  opts?: { writingStyle?: WritingStyle; writingStylePrompt?: string }
+) => {
+  const base = `Role: 你是 Wing App 的智能内核，一位敏锐的传记作家。
+
+Task: 根据用户一天内的碎片化记录，**仅**撰写第一人称日记正文（Markdown）。不输出标题、心情、概括、待办等，只输出 JSON 中的 content_markdown 字段。
+Language: Output MUST be in ${lang === 'zh' ? 'Simplified Chinese' : 'English'}。
+
+Output Requirement:
+1. 必须只输出纯 JSON，形如 {"content_markdown":"..."}，不要包含 Markdown 代码块。
+2. 文笔需流畅、内省。若输入中有 [Image]，须在正文对应位置保留 [Image]，数量与输入一致。`;
+  const style = getWritingStylePrompt(opts?.writingStyle, opts?.writingStylePrompt);
+  return base + style;
+};
+
+/** 根据正文生成标题、概括、心情的 Schema */
+const META_ONLY_SCHEMA = {
+  type: Type.OBJECT,
+  properties: {
+    title: { type: Type.STRING, description: "简短优美的标题" },
+    mood: { type: Type.STRING, description: "代表心情的单个 emoji，仅根据正文选取，禁止输出文字" },
+    summary: { type: Type.STRING, description: "一句话概括" }
+  },
+  required: ["title", "mood", "summary"]
+};
+
+/** 根据日记生成洞察与待办的 Schema */
+const INSIGHT_TODOS_SCHEMA = {
+  type: Type.OBJECT,
+  properties: {
+    insights: { type: Type.STRING, description: "心理学视角的深度分析与鼓励，约 50–100 字" },
+    todos: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          title: { type: Type.STRING },
+          priority: { type: Type.STRING, enum: ["high", "medium", "low"] }
+        },
+        required: ["title", "priority"]
+      }
+    }
+  },
+  required: ["insights", "todos"]
+};
+
 /**
  * Gemini API 错误类型
  */
@@ -279,8 +336,222 @@ export const GeminiService = {
       throw new GeminiAPIError('Network error. Please check your internet connection.', 'NETWORK_ERROR');
     }
     throw new GeminiAPIError(lastError?.message || 'Stream synthesis failed', 'UNKNOWN_ERROR');
-  }
-,
+  },
+
+  /**
+   * 仅生成日记正文（三步合成第一步），可流式；用于降低单次请求超时
+   * @param fragments 碎片
+   * @param lang 语言
+   * @param apiKey API 密钥
+   * @param retries 重试次数
+   * @param previousGeneration 再次收拢时的已有正文
+   * @param model 模型名
+   * @param writingStyle 文风
+   * @param writingStylePrompt 自定义文风
+   * @returns { markdownContent }
+   */
+  async synthesizeJournalBody(
+    fragments: RawFragment[],
+    lang: Language = 'zh',
+    apiKey?: string,
+    retries: number = 2,
+    previousGeneration?: string,
+    model?: string,
+    writingStyle?: WritingStyle,
+    writingStylePrompt?: string
+  ): Promise<{ markdownContent: string }> {
+    const key = apiKey || process.env.API_KEY || process.env.GEMINI_API_KEY;
+    if (!key) throw new GeminiAPIError('API Key is missing. Please configure it in settings.', 'MISSING_API_KEY');
+    if (fragments.length === 0 && !previousGeneration?.trim()) throw new GeminiAPIError('No fragments to synthesize.', 'EMPTY_FRAGMENTS');
+
+    const inputContext = fragments
+      .sort((a, b) => a.timestamp - b.timestamp)
+      .map(f => `[${new Date(f.timestamp).toLocaleTimeString()}] ${f.type === 'IMAGE' ? '[Image]' : ''} ${safeFragmentContentForPrompt(f)}`)
+      .join('\n');
+    let fullInput = `这是用户今天的记录：\n\n${inputContext}`;
+    if (previousGeneration?.trim()) {
+      const pg = previousGeneration.length > 30000 ? previousGeneration.slice(0, 30000) + '\n\n...(正文过长已截断)' : previousGeneration;
+      fullInput += `\n\n[已生成的日记正文，供重新生成时参考]\n${pg}\n\n【重新生成】content_markdown 必须为**重新撰写**的正文，禁止逐字照抄。`;
+    }
+
+    let lastError: Error | null = null;
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        const ai = new GoogleGenAI({ apiKey: key });
+        const res = await ai.models.generateContent({
+          model: model || 'gemini-3-flash-preview',
+          contents: fullInput,
+          config: {
+            systemInstruction: getSystemInstructionForBodyOnly(lang, { writingStyle, writingStylePrompt }),
+            responseMimeType: 'application/json',
+            responseSchema: BODY_ONLY_SCHEMA,
+            maxOutputTokens: 8192
+          }
+        });
+        if (!res.text) throw new GeminiAPIError('Empty response from API', 'EMPTY_RESPONSE');
+        return parseBodyOnlyResult(res.text, fragments);
+      } catch (e) {
+        lastError = e as Error;
+        if (e instanceof GeminiAPIError) throw e;
+        if (attempt === retries) break;
+        await new Promise((r) => setTimeout(r, Math.pow(2, attempt) * 1000));
+      }
+    }
+    if (lastError instanceof GeminiAPIError) throw lastError;
+    if (lastError instanceof TypeError && (lastError.message || '').includes('fetch')) throw new GeminiAPIError('Network error. Please check your internet connection.', 'NETWORK_ERROR');
+    throw new GeminiAPIError(lastError?.message || 'Body synthesis failed', 'UNKNOWN_ERROR');
+  },
+
+  /**
+   * 流式仅生成日记正文（三步合成第一步），逐块 yield JSON 文本
+   */
+  async *synthesizeJournalBodyStream(
+    fragments: RawFragment[],
+    lang: Language = 'zh',
+    apiKey?: string,
+    retries: number = 2,
+    previousGeneration?: string,
+    model?: string,
+    writingStyle?: WritingStyle,
+    writingStylePrompt?: string
+  ): AsyncGenerator<string> {
+    const key = apiKey || process.env.API_KEY || process.env.GEMINI_API_KEY;
+    if (!key) throw new GeminiAPIError('API Key is missing. Please configure it in settings.', 'MISSING_API_KEY');
+    if (fragments.length === 0 && !previousGeneration?.trim()) throw new GeminiAPIError('No fragments to synthesize.', 'EMPTY_FRAGMENTS');
+
+    const inputContext = fragments
+      .sort((a, b) => a.timestamp - b.timestamp)
+      .map(f => `[${new Date(f.timestamp).toLocaleTimeString()}] ${f.type === 'IMAGE' ? '[Image]' : ''} ${safeFragmentContentForPrompt(f)}`)
+      .join('\n');
+    let fullInput = `这是用户今天的记录：\n\n${inputContext}`;
+    if (previousGeneration?.trim()) {
+      const pg = previousGeneration.length > 30000 ? previousGeneration.slice(0, 30000) + '\n\n...(正文过长已截断)' : previousGeneration;
+      fullInput += `\n\n[已生成的日记正文，供重新生成时参考]\n${pg}\n\n【重新生成】content_markdown 必须为**重新撰写**的正文，禁止逐字照抄。`;
+    }
+
+    let lastError: Error | null = null;
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        const ai = new GoogleGenAI({ apiKey: key });
+        const stream = await ai.models.generateContentStream({
+          model: model || 'gemini-3-flash-preview',
+          contents: fullInput,
+          config: {
+            systemInstruction: getSystemInstructionForBodyOnly(lang, { writingStyle, writingStylePrompt }),
+            responseMimeType: 'application/json',
+            responseSchema: BODY_ONLY_SCHEMA,
+            maxOutputTokens: 8192
+          }
+        });
+        for await (const chunk of stream) {
+          const t = chunk?.text;
+          if (t && typeof t === 'string') yield t;
+        }
+        return;
+      } catch (e) {
+        lastError = e as Error;
+        if (e instanceof GeminiAPIError) throw e;
+        if (attempt === retries) break;
+        await new Promise((r) => setTimeout(r, Math.pow(2, attempt) * 1000));
+      }
+    }
+    if (lastError instanceof GeminiAPIError) throw lastError;
+    if (lastError instanceof TypeError && (lastError.message || '').includes('fetch')) throw new GeminiAPIError('Network error. Please check your internet connection.', 'NETWORK_ERROR');
+    throw new GeminiAPIError(lastError?.message || 'Body stream failed', 'UNKNOWN_ERROR');
+  },
+
+  /**
+   * 根据日记正文生成标题、概括、心情（三步合成第二步）
+   */
+  async synthesizeJournalMeta(
+    markdownContent: string,
+    lang: Language = 'zh',
+    apiKey?: string,
+    model?: string
+  ): Promise<{ title: string; summary: string; mood: string }> {
+    const key = apiKey || process.env.API_KEY || process.env.GEMINI_API_KEY;
+    if (!key) throw new GeminiAPIError('API Key is missing. Please configure it in settings.', 'MISSING_API_KEY');
+
+    const md = (markdownContent || '').trim() || '（无）';
+    const mdSafe = md.length > 6000 ? md.slice(0, 6000) + '\n\n...(过长已截断)' : md;
+    const user = `根据以下日记正文，输出 JSON：title（简短优美标题）、mood（单个 emoji，仅根据正文选取）、summary（一句话概括）。语言：${lang === 'zh' ? '简体中文' : 'English'}。\n\n正文：\n${mdSafe}`;
+
+    let lastError: Error | null = null;
+    for (let attempt = 0; attempt <= 2; attempt++) {
+      try {
+        const ai = new GoogleGenAI({ apiKey: key });
+        const res = await ai.models.generateContent({
+          model: model || 'gemini-3-flash-preview',
+          contents: user,
+          config: { responseMimeType: 'application/json', responseSchema: META_ONLY_SCHEMA, maxOutputTokens: 512 }
+        });
+        if (!res.text) throw new GeminiAPIError('Empty response', 'EMPTY_RESPONSE');
+        const raw = String(res.text).trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+        const obj = JSON.parse(raw) as Record<string, unknown>;
+        const title = obj.title != null ? String(obj.title) : '';
+        const summary = obj.summary != null ? String(obj.summary) : '';
+        const mood = obj.mood != null ? String(obj.mood) : '🌿';
+        return { title, summary, mood };
+      } catch (e) {
+        lastError = e as Error;
+        if (e instanceof GeminiAPIError) throw e;
+        if (attempt < 2) await new Promise((r) => setTimeout(r, Math.pow(2, attempt) * 1000));
+      }
+    }
+    if (lastError instanceof GeminiAPIError) throw lastError;
+    throw new GeminiAPIError(lastError?.message || 'Meta synthesis failed', 'UNKNOWN_ERROR');
+  },
+
+  /**
+   * 根据日记生成洞察与待办（三步合成第三步）
+   * @param entry 含 title、mood、summary、markdownContent
+   * @returns { aiInsights, todos }
+   */
+  async regenerateInsightAndTodos(
+    entry: Pick<WingEntry, 'title' | 'mood' | 'summary' | 'markdownContent'>,
+    lang: Language = 'zh',
+    apiKey?: string,
+    model?: string,
+    insightPrompt?: string
+  ): Promise<{ aiInsights: string; todos: WingTodo[] }> {
+    const key = apiKey || process.env.API_KEY || process.env.GEMINI_API_KEY;
+    if (!key) throw new GeminiAPIError('API Key is missing. Please configure it in settings.', 'MISSING_API_KEY');
+
+    const instruction = (insightPrompt && insightPrompt.trim())
+      ? insightPrompt.trim()
+      : `根据以下日记，输出 JSON：insights（心理学视角的深度分析与鼓励，约 50–100 字）、todos（从正文或概括中提取的待办数组，每项 { title, priority: high|medium|low }，若无则 []）。语言：${lang === 'zh' ? '简体中文' : 'English'}。`;
+    const md = (entry.markdownContent || '').trim() || '（无）';
+    const mdSafe = md.length > 4000 ? md.slice(0, 4000) + '\n...(过长已截断)' : md;
+    const user = `${instruction}\n\n标题：${entry.title || '（无）'}\n心情：${entry.mood || '（无）'}\n概括：${entry.summary || '（无）'}\n正文：\n${mdSafe}`;
+
+    let lastError: Error | null = null;
+    for (let attempt = 0; attempt <= 2; attempt++) {
+      try {
+        const ai = new GoogleGenAI({ apiKey: key });
+        const res = await ai.models.generateContent({
+          model: model || 'gemini-3-flash-preview',
+          contents: user,
+          config: { responseMimeType: 'application/json', responseSchema: INSIGHT_TODOS_SCHEMA, maxOutputTokens: 1024 }
+        });
+        if (!res.text) throw new GeminiAPIError('Empty response', 'EMPTY_RESPONSE');
+        const raw = String(res.text).trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+        const obj = JSON.parse(raw) as Record<string, unknown>;
+        const aiInsights = (obj.insights != null ? String(obj.insights) : '').trim();
+        const rawTodos = Array.isArray(obj.todos) ? obj.todos : [];
+        const todos = rawTodos.map((t: unknown) => {
+          const o = (t && typeof t === 'object' && t !== null) ? t as Record<string, unknown> : {};
+          return { title: String(o.title ?? ''), priority: String(o.priority ?? 'medium') as 'high' | 'medium' | 'low' };
+        }).filter((x) => x.title.trim());
+        return { aiInsights, todos };
+      } catch (e) {
+        lastError = e as Error;
+        if (e instanceof GeminiAPIError) throw e;
+        if (attempt < 2) await new Promise((r) => setTimeout(r, Math.pow(2, attempt) * 1000));
+      }
+    }
+    if (lastError instanceof GeminiAPIError) throw lastError;
+    throw new GeminiAPIError(lastError?.message || 'Insight and todos failed', 'UNKNOWN_ERROR');
+  },
 
   /**
    * 仅根据日记内容重新生成心理洞察（约 50–100 字）
@@ -360,6 +631,23 @@ export function buildInsightUserContent(
 心情：${entry.mood || '（无）'}
 概括：${entry.summary || '（无）'}
 正文：\n${mdSafe}`;
+}
+
+/** 解析仅正文的 JSON 并做 [Image] 占位补全；供 synthesizeJournalBody 与流式解析共用 */
+export function parseBodyOnlyResult(rawText: string, fragments: RawFragment[]): { markdownContent: string } {
+  const raw = String(rawText || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+  let result: Record<string, unknown>;
+  try {
+    result = JSON.parse(raw) as Record<string, unknown>;
+  } catch {
+    throw new GeminiAPIError('Failed to parse API response. The response may not be valid JSON.', 'PARSE_ERROR');
+  }
+  const rawMd = result.content_markdown ?? result.contentMarkdown;
+  let md = (rawMd != null && String(rawMd).trim() !== '') ? String(rawMd) : '';
+  const imageCount = fragments.filter((f) => (f as { type?: string }).type === 'IMAGE').length;
+  const placeholders = (md.match(/\[Image\]/gi) || []).length;
+  for (let i = placeholders; i < imageCount; i++) md += '\n\n[Image]\n\n';
+  return { markdownContent: md };
 }
 
 /** 解析合成结果 JSON 并做 [Image] 占位补全，返回 WingEntry 部分字段；供 geminiService 与 aiHandler 流式解析共用 */

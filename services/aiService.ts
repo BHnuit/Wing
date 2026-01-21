@@ -4,7 +4,7 @@
  */
 
 import { AppSettings, AiProvider, RawFragment, WingEntry, Language, FragmentType } from '../types';
-import { GeminiService, GeminiAPIError, getSystemInstructionForSynthesis, buildInsightUserContent, safeFragmentContentForPrompt } from './geminiService';
+import { GeminiService, GeminiAPIError, getSystemInstructionForSynthesis, getSystemInstructionForBodyOnly, buildInsightUserContent, safeFragmentContentForPrompt } from './geminiService';
 
 /** 统一 AI 调用错误，与 GeminiAPIError 兼容（含 code） */
 export class AiAPIError extends Error {
@@ -352,6 +352,173 @@ async function openAICompatibleRegenerateInsight(
   return text;
 }
 
+/**
+ * 使用 OpenAI 兼容接口仅生成日记正文（三步合成第一步）
+ */
+async function openAICompatibleSynthesizeBody(
+  fragments: RawFragment[],
+  lang: Language,
+  settings: AppSettings,
+  retries: number,
+  previousGeneration?: string
+): Promise<{ markdownContent: string }> {
+  const base = getBaseUrl(settings);
+  const model = getModel(settings);
+  if (!model) throw new AiAPIError('请填写模型名称', 'MISSING_MODEL');
+  const url = `${base}/v1/chat/completions`;
+  const sys = getSystemInstructionForBodyOnly(lang, { writingStyle: settings.writingStyle, writingStylePrompt: settings.writingStylePrompt }) +
+    '\n\nOutput ONLY a valid JSON object: {"content_markdown":"..."}. No markdown, no extra text.';
+  const inputContext = fragments
+    .sort((a, b) => a.timestamp - b.timestamp)
+    .map((f) => `[${new Date(f.timestamp).toLocaleTimeString()}] ${f.type === FragmentType.IMAGE ? '[Image]' : ''} ${safeFragmentContentForPrompt(f)}`)
+    .join('\n');
+  let fullInput = `这是用户今天的记录：\n\n${inputContext}`;
+  if (previousGeneration?.trim()) {
+    const pg = previousGeneration.length > 30000 ? previousGeneration.slice(0, 30000) + '\n\n...(正文过长已截断)' : previousGeneration;
+    fullInput += `\n\n[已生成的日记正文，供重新生成时参考]\n${pg}\n\n【重新生成】content_markdown 必须为**重新撰写**的正文，禁止逐字照抄。`;
+  }
+  const isCustom = (settings.aiProvider || 'gemini') === 'custom';
+  const body: Record<string, unknown> = {
+    model,
+    messages: [{ role: 'system' as const, content: sys }, { role: 'user' as const, content: fullInput }],
+    max_tokens: 8192
+  };
+  if (!isCustom) body.response_format = { type: 'json_object' as const };
+  let lastErr: Error | null = null;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${getEffectiveApiKey(settings)}` },
+        body: JSON.stringify(body)
+      });
+      const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+      if (!res.ok) {
+        const msg = (json.msg as string) || (json.err_msg as string) || (typeof json.error === 'string' ? json.error : null)
+          || (json.error && typeof (json.error as { message?: string }).message === 'string' ? (json.error as { message?: string }).message : null)
+          || (json.message as string) || res.statusText || `HTTP ${res.status}`;
+        throw new AiAPIError(msg, (json.error as { code?: string })?.code || 'API_ERROR', res.status);
+      }
+      const content = json.choices?.[0] && typeof (json.choices[0] as { message?: { content?: unknown } }).message?.content === 'string'
+        ? (json.choices[0] as { message: { content: string } }).message.content
+        : null;
+      if (!content) throw new AiAPIError('接口返回为空或格式异常', 'EMPTY_RESPONSE');
+      const raw = String(content).trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+      const result = JSON.parse(raw) as Record<string, unknown>;
+      const rawMd = result.content_markdown ?? result.contentMarkdown;
+      let md = (rawMd != null && String(rawMd).trim() !== '') ? String(rawMd) : '';
+      const imageCount = fragments.filter((f) => f.type === FragmentType.IMAGE || (f as { type?: string }).type === 'IMAGE').length;
+      const placeholders = (md.match(/\[Image\]/gi) || []).length;
+      for (let i = placeholders; i < imageCount; i++) md += '\n\n[Image]\n\n';
+      return { markdownContent: md };
+    } catch (e) {
+      lastErr = e as Error;
+      if (e instanceof AiAPIError) throw e;
+      if (attempt === retries) break;
+      await new Promise((r) => setTimeout(r, Math.pow(2, attempt) * 1000));
+    }
+  }
+  if (lastErr instanceof TypeError && (lastErr.message || '').includes('fetch')) throw new AiAPIError('网络异常，请检查网络', 'NETWORK_ERROR');
+  throw new AiAPIError(lastErr?.message || '正文合成失败', 'UNKNOWN_ERROR');
+}
+
+/**
+ * 使用 OpenAI 兼容接口根据正文生成标题、概括、心情（三步合成第二步）
+ */
+async function openAICompatibleSynthesizeMeta(
+  markdownContent: string,
+  lang: Language,
+  settings: AppSettings
+): Promise<{ title: string; summary: string; mood: string }> {
+  const base = getBaseUrl(settings);
+  const model = getModel(settings);
+  if (!model) throw new AiAPIError('请填写模型名称', 'MISSING_MODEL');
+  const md = (markdownContent || '').trim() || '（无）';
+  const mdSafe = md.length > 6000 ? md.slice(0, 6000) + '\n\n...(过长已截断)' : md;
+  const user = `根据以下日记正文，输出 JSON：title（简短优美标题）、mood（单个 emoji，仅根据正文选取）、summary（一句话概括）。语言：${lang === 'zh' ? '简体中文' : 'English'}。\n\n正文：\n${mdSafe}`;
+  const res = await fetch(`${base}/v1/chat/completions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${getEffectiveApiKey(settings)}` },
+    body: JSON.stringify({
+      model,
+      messages: [
+        { role: 'system' as const, content: 'Output ONLY a valid JSON: {"title":"","mood":"","summary":""}. No markdown.' },
+        { role: 'user' as const, content: user }
+      ],
+      max_tokens: 512
+    })
+  });
+  const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+  if (!res.ok) {
+    const msg = (json.msg as string) || (json.err_msg as string) || (typeof json.error === 'string' ? json.error : null)
+      || (json.error && typeof (json.error as { message?: string }).message === 'string' ? (json.error as { message?: string }).message : null)
+      || (json.message as string) || res.statusText || `HTTP ${res.status}`;
+    throw new AiAPIError(msg, (json.error as { code?: string })?.code || 'API_ERROR', res.status);
+  }
+  const content = json.choices?.[0] && typeof (json.choices[0] as { message?: { content?: unknown } }).message?.content === 'string'
+    ? (json.choices[0] as { message: { content: string } }).message.content
+    : null;
+  if (!content) throw new AiAPIError('接口返回为空', 'EMPTY_RESPONSE');
+  const raw = String(content).trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+  const obj = JSON.parse(raw) as Record<string, unknown>;
+  return {
+    title: obj.title != null ? String(obj.title) : '',
+    summary: obj.summary != null ? String(obj.summary) : '',
+    mood: obj.mood != null ? String(obj.mood) : '🌿'
+  };
+}
+
+/**
+ * 使用 OpenAI 兼容接口根据日记生成洞察与待办（三步合成第三步）
+ */
+async function openAICompatibleRegenerateInsightAndTodos(
+  entry: Pick<WingEntry, 'title' | 'mood' | 'summary' | 'markdownContent'>,
+  lang: Language,
+  settings: AppSettings
+): Promise<{ aiInsights: string; todos: { title: string; priority: string }[] }> {
+  const base = getBaseUrl(settings);
+  const model = getModel(settings);
+  if (!model) throw new AiAPIError('请填写模型名称', 'MISSING_MODEL');
+  const instruction = (settings.insightPrompt && settings.insightPrompt.trim())
+    ? settings.insightPrompt.trim()
+    : `根据以下日记，输出 JSON：insights（心理学视角的深度分析与鼓励，约 50–100 字）、todos（从正文或概括中提取的待办数组，每项 { title, priority: high|medium|low }，若无则 []）。语言：${lang === 'zh' ? '简体中文' : 'English'}。`;
+  const md = (entry.markdownContent || '').trim() || '（无）';
+  const mdSafe = md.length > 4000 ? md.slice(0, 4000) + '\n...(过长已截断)' : md;
+  const user = `${instruction}\n\n标题：${entry.title || '（无）'}\n心情：${entry.mood || '（无）'}\n概括：${entry.summary || '（无）'}\n正文：\n${mdSafe}`;
+  const res = await fetch(`${base}/v1/chat/completions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${getEffectiveApiKey(settings)}` },
+    body: JSON.stringify({
+      model,
+      messages: [
+        { role: 'system' as const, content: 'Output ONLY a valid JSON: {"insights":"","todos":[{"title","priority"}]}. No markdown.' },
+        { role: 'user' as const, content: user }
+      ],
+      max_tokens: 1024
+    })
+  });
+  const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+  if (!res.ok) {
+    const msg = (json.msg as string) || (json.err_msg as string) || (typeof json.error === 'string' ? json.error : null)
+      || (json.error && typeof (json.error as { message?: string }).message === 'string' ? (json.error as { message?: string }).message : null)
+      || (json.message as string) || res.statusText || `HTTP ${res.status}`;
+    throw new AiAPIError(msg, (json.error as { code?: string })?.code || 'API_ERROR', res.status);
+  }
+  const content = json.choices?.[0] && typeof (json.choices[0] as { message?: { content?: unknown } }).message?.content === 'string'
+    ? (json.choices[0] as { message: { content: string } }).message.content
+    : null;
+  if (!content) throw new AiAPIError('接口返回为空', 'EMPTY_RESPONSE');
+  const raw = String(content).trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+  const obj = JSON.parse(raw) as Record<string, unknown>;
+  const aiInsights = (obj.insights != null ? String(obj.insights) : '').trim();
+  const rawTodos = Array.isArray(obj.todos) ? obj.todos : [];
+  const todos = rawTodos.map((t: unknown) => {
+    const o = (t && typeof t === 'object' && t !== null) ? t as Record<string, unknown> : {};
+    return { title: String(o.title ?? ''), priority: String(o.priority ?? 'medium') };
+  }).filter((x) => x.title.trim());
+  return { aiInsights, todos };
+}
+
 export const AiService = {
   /**
    * 流式合成日记（仅服务端）：逐块 yield JSON 文本，供代理做 SSE 转发以降低 TTFB
@@ -398,6 +565,138 @@ export const AiService = {
       if (!getModel(settings)) throw new AiAPIError('请填写模型名称', 'MISSING_MODEL');
     }
     yield* openAICompatibleSynthesizeStream(fragments, lang, settings, retries, previousGeneration);
+  },
+
+  /**
+   * 仅生成日记正文（三步合成第一步），可选流式；走代理时使用 action=synthesizeBody
+   * @param opts.stream 是否流式（仅直连 Gemini 时有效；代理需服务端支持 handleSynthesizeBodyStream）
+   */
+  async synthesizeJournalBody(
+    fragments: RawFragment[],
+    lang: Language,
+    settings: AppSettings,
+    retries: number = 2,
+    previousGeneration?: string,
+    opts?: { stream?: boolean }
+  ): Promise<{ markdownContent: string }> {
+    if (!getEffectiveApiKey(settings)) throw new AiAPIError('请先在设置中配置 API 密钥', 'MISSING_API_KEY');
+    const provider = (settings.aiProvider || 'gemini') as AiProvider;
+
+    if (USE_AI_PROXY) {
+      const fragmentsForProxy = fragments.map(({ imageData, ...f }) => f);
+      const body = {
+        action: 'synthesizeBody',
+        provider,
+        apiKey: getEffectiveApiKey(settings),
+        baseUrl: provider === 'custom' ? (settings.aiBaseUrl || '').trim() : undefined,
+        model: getModel(settings),
+        lang,
+        fragments: fragmentsForProxy,
+        previousGeneration,
+        writingStyle: settings.writingStyle,
+        writingStylePrompt: settings.writingStylePrompt
+      };
+      const res = await fetch(AI_PROXY_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const data = (await res.json().catch(() => ({}))) as { markdownContent?: string; error?: string; code?: string };
+      if (!res.ok) throw new AiAPIError(data.error || res.statusText || `HTTP ${res.status}`, data.code, res.status);
+      const md = (data.markdownContent != null && String(data.markdownContent).trim() !== '') ? data.markdownContent : '';
+      const imageCount = fragments.filter((f) => (f as { type?: string }).type === 'IMAGE').length;
+      const placeholders = (md.match(/\[Image\]/gi) || []).length;
+      let out = md;
+      for (let i = placeholders; i < imageCount; i++) out += '\n\n[Image]\n\n';
+      return { markdownContent: out };
+    }
+
+    if (provider === 'gemini') {
+      try {
+        return await GeminiService.synthesizeJournalBody(
+          fragments, lang, getEffectiveApiKey(settings), retries, previousGeneration,
+          getModel(settings), settings.writingStyle, settings.writingStylePrompt
+        );
+      } catch (e) {
+        if (e instanceof GeminiAPIError) throw new AiAPIError(e.message, e.code, e.statusCode);
+        throw e;
+      }
+    }
+    if (provider === 'custom') {
+      const base = (settings.aiBaseUrl || '').trim();
+      if (!base) throw new AiAPIError('请填写自定义 Base URL', 'MISSING_BASE_URL');
+      if (!getModel(settings)) throw new AiAPIError('请填写模型名称', 'MISSING_MODEL');
+    }
+    return openAICompatibleSynthesizeBody(fragments, lang, settings, retries, previousGeneration);
+  },
+
+  /**
+   * 根据日记正文生成标题、概括、心情（三步合成第二步）
+   */
+  async synthesizeJournalMeta(
+    markdownContent: string,
+    lang: Language,
+    settings: AppSettings
+  ): Promise<{ title: string; summary: string; mood: string }> {
+    if (!getEffectiveApiKey(settings)) throw new AiAPIError('请先在设置中配置 API 密钥', 'MISSING_API_KEY');
+    const provider = (settings.aiProvider || 'gemini') as AiProvider;
+    if (USE_AI_PROXY) {
+      const body = {
+        action: 'synthesizeMeta',
+        provider,
+        apiKey: getEffectiveApiKey(settings),
+        baseUrl: provider === 'custom' ? (settings.aiBaseUrl || '').trim() : undefined,
+        model: getModel(settings),
+        lang,
+        markdownContent
+      };
+      const res = await fetch(AI_PROXY_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const data = (await res.json().catch(() => ({}))) as { title?: string; summary?: string; mood?: string; error?: string; code?: string };
+      if (!res.ok) throw new AiAPIError(data.error || res.statusText || `HTTP ${res.status}`, data.code, res.status);
+      return { title: data.title ?? '', summary: data.summary ?? '', mood: data.mood ?? '🌿' };
+    }
+    if (provider === 'gemini') {
+      try {
+        return await GeminiService.synthesizeJournalMeta(markdownContent, lang, getEffectiveApiKey(settings), getModel(settings));
+      } catch (e) {
+        if (e instanceof GeminiAPIError) throw new AiAPIError(e.message, e.code, e.statusCode);
+        throw e;
+      }
+    }
+    return openAICompatibleSynthesizeMeta(markdownContent, lang, settings);
+  },
+
+  /**
+   * 根据日记生成洞察与待办（三步合成第三步）
+   */
+  async synthesizeInsightAndTodos(
+    entry: Pick<WingEntry, 'title' | 'mood' | 'summary' | 'markdownContent'>,
+    lang: Language,
+    settings: AppSettings
+  ): Promise<{ aiInsights: string; todos: { title: string; priority: string }[] }> {
+    if (!getEffectiveApiKey(settings)) throw new AiAPIError('请先在设置中配置 API 密钥', 'MISSING_API_KEY');
+    const provider = (settings.aiProvider || 'gemini') as AiProvider;
+    if (USE_AI_PROXY) {
+      const body = {
+        action: 'synthesizeInsightAndTodos',
+        provider,
+        apiKey: getEffectiveApiKey(settings),
+        baseUrl: provider === 'custom' ? (settings.aiBaseUrl || '').trim() : undefined,
+        model: getModel(settings),
+        lang,
+        entry: { title: entry.title, mood: entry.mood, summary: entry.summary, markdownContent: entry.markdownContent },
+        insightPrompt: settings.insightPrompt
+      };
+      const res = await fetch(AI_PROXY_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const data = (await res.json().catch(() => ({}))) as { aiInsights?: string; todos?: { title: string; priority: string }[]; error?: string; code?: string };
+      if (!res.ok) throw new AiAPIError(data.error || res.statusText || `HTTP ${res.status}`, data.code, res.status);
+      return { aiInsights: data.aiInsights ?? '', todos: Array.isArray(data.todos) ? data.todos : [] };
+    }
+    if (provider === 'gemini') {
+      try {
+        return await GeminiService.regenerateInsightAndTodos(entry, lang, getEffectiveApiKey(settings), getModel(settings), settings.insightPrompt);
+      } catch (e) {
+        if (e instanceof GeminiAPIError) throw new AiAPIError(e.message, e.code, e.statusCode);
+        throw e;
+      }
+    }
+    return openAICompatibleRegenerateInsightAndTodos(entry, lang, settings);
   },
 
   /**
