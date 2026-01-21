@@ -364,7 +364,7 @@ const JournalDetail: React.FC = () => {
 
   return (
     <div className="bg-twilight-bg dark:bg-nocturnal-bg min-h-screen">
-      <header className="sticky top-0 z-50 glass px-4 py-4 flex items-center justify-between">
+      <header className="sticky top-0 z-50 glass px-4 py-3 flex items-center justify-between h-[4.125rem]">
         <button onClick={() => navigate(-1)} className="p-2 text-twilight-duskLight dark:text-nocturnal-secondary hover:text-twilight-amber dark:hover:text-nocturnal-accent hover:bg-twilight-cream dark:hover:bg-nocturnal-surface/60 rounded-full transition-colors">
           <ArrowLeft size={20} />
         </button>

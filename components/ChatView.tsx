@@ -110,12 +110,26 @@ const ChatView: React.FC = () => {
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const placeholderMeasureRef = useRef<HTMLDivElement>(null);
+  /** 切换日期时置为 true，避免 fragments 效果里 scrollIntoView 滚到底部 */
+  const isDateSwitchRef = useRef(false);
+  /** 上一 viewDate，用于区分「切换日期」与「同一天新增片段」 */
+  const prevViewDateRef = useRef<string | undefined>(undefined);
   /** 折叠时占位语若超过一行，根据测量结果扩展行数（1–4） */
   const [collapsedRows, setCollapsedRows] = useState(1);
+  /** 底部输入栏：向下滑动隐藏，向上或到底部时显示 */
+  const [inputBarVisible, setInputBarVisible] = useState(true);
+  const lastMainScrollTopRef = useRef(-1);
   const { showToast, ToastContainer } = useToast();
 
+  /** 随 viewDate 拉取 session；切换日期时滚动到 main 顶部并标记，避免后续 fragments 效果滚到底部 */
   useEffect(() => {
+    const isSwitch = prevViewDateRef.current !== undefined && prevViewDateRef.current !== viewDate;
     setSession(MockDataService.getSessionByDate(viewDate) ?? null);
+    if (isSwitch) {
+      isDateSwitchRef.current = true;
+      (scrollRef.current?.closest('main') as HTMLElement | null)?.scrollTo({ top: 0, behavior: 'auto' });
+    }
+    prevViewDateRef.current = viewDate;
   }, [viewDate]);
 
   /** 有输入时退出收拢模式，按钮变回发送按钮 */
@@ -161,9 +175,63 @@ const ChatView: React.FC = () => {
     return () => window.removeEventListener('wing_settings_updated', handleSettingsUpdate);
   }, []);
 
+  /** 同一天新增片段（发送、加图等）时滚到底部；切换日期引起的 fragments 变化则跳过，保持顶部 */
   useEffect(() => {
+    if (isDateSwitchRef.current) {
+      isDateSwitchRef.current = false;
+      return;
+    }
     scrollRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [session?.fragments]);
+
+  /**
+   * 监听整个页面的 touchmove / wheel，用 requestAnimationFrame 取「当前滚动位置」后做输入栏显隐：
+   * 向下滑隐藏，向上或到顶/到底显示。优先读 main，没有则读 window/document。
+   */
+  const INPUT_BAR_SCROLL_THRESHOLD = 5;
+  const INPUT_BAR_BOTTOM_MARGIN = 10;
+  useEffect(() => {
+    const run = () => {
+      requestAnimationFrame(() => {
+        const main = scrollRef.current?.closest('main') as HTMLElement | null;
+        const useWindow = !main || main.scrollHeight <= main.clientHeight;
+        const scrollTop = useWindow ? window.scrollY : main!.scrollTop;
+        const scrollHeight = useWindow ? document.documentElement.scrollHeight : main!.scrollHeight;
+        const clientHeight = useWindow ? window.innerHeight : main!.clientHeight;
+
+        const last = lastMainScrollTopRef.current;
+        if (last < 0) {
+          lastMainScrollTopRef.current = scrollTop;
+          return;
+        }
+        if (scrollTop <= 0) {
+          setInputBarVisible(true);
+          lastMainScrollTopRef.current = scrollTop;
+          return;
+        }
+        const atBottom = scrollTop + clientHeight >= scrollHeight - INPUT_BAR_BOTTOM_MARGIN;
+        if (atBottom) {
+          setInputBarVisible(true);
+          lastMainScrollTopRef.current = scrollTop;
+          return;
+        }
+        const delta = scrollTop - last;
+        lastMainScrollTopRef.current = scrollTop;
+        if (delta > INPUT_BAR_SCROLL_THRESHOLD) setInputBarVisible(false);
+        else if (delta < -INPUT_BAR_SCROLL_THRESHOLD) setInputBarVisible(true);
+      });
+    };
+    document.addEventListener('touchmove', run, { passive: true });
+    document.addEventListener('wheel', run, { passive: true });
+    window.addEventListener('scroll', run, { passive: true });
+    document.addEventListener('scroll', run, { passive: true, capture: true });
+    return () => {
+      document.removeEventListener('touchmove', run);
+      document.removeEventListener('wheel', run);
+      window.removeEventListener('scroll', run);
+      document.removeEventListener('scroll', run, { capture: true });
+    };
+  }, []);
 
   /**
    * 处理图片选择。
@@ -644,7 +712,9 @@ const ChatView: React.FC = () => {
       {/* 占位：避免最后一条内容被固定消息栏遮挡 */}
       <div className="h-24 flex-shrink-0" aria-hidden="true" />
 
-      <div className="fixed bottom-[3.75rem] left-1/2 -translate-x-1/2 w-full max-w-2xl z-40 px-4 py-3">
+      <div
+        className={`fixed bottom-4 left-1/2 -translate-x-1/2 w-full max-w-2xl z-40 px-4 py-3 transition-transform duration-300 ease-out ${inputBarVisible ? 'translate-y-0' : 'translate-y-full pointer-events-none'}`}
+      >
         <input
           type="file"
           ref={fileInputRef}

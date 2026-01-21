@@ -27,57 +27,16 @@ function getPageFontFamily(pageFont?: string): string {
   }
 }
 
-/** 滚动方向判定阈值（px），过大会导致触控/模拟滑动时单次 delta 不足而不触发；5 在防抖与灵敏度间折中 */
-const SCROLL_THRESHOLD = 5;
-/** 移动端断点（与 Tailwind md 一致），仅在此宽度以下启用 Tab 栏滑动隐藏 */
-const MOBILE_BREAKPOINT = 768;
-
 const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const location = useLocation();
+  const mainRef = useRef<HTMLElement>(null);
   const [settings, setSettings] = useState(MockDataService.getSettings());
   const t = useTranslation(settings.language);
   const isDetail = location.pathname.includes('/journal/');
 
-  const mainRef = useRef<HTMLElement>(null);
-  const [tabBarVisible, setTabBarVisible] = useState(true);
-  const lastScrollTopRef = useRef(-1);
-
-  /**
-   * 根据滚动位置与方向更新底部 Tab 栏显隐（仅移动端）。
-   * 向下滑动隐藏，向上滑动或接近顶部时显示。
-   * 使用 window.innerWidth 判断，避免设备模拟时 matchMedia 未及时更新。
-   */
-  const handleScroll = useCallback((scrollTop: number) => {
-    if (typeof window === 'undefined' || window.innerWidth >= MOBILE_BREAKPOINT) return;
-    const last = lastScrollTopRef.current;
-    if (last < 0) {
-      lastScrollTopRef.current = scrollTop;
-      return;
-    }
-    if (scrollTop <= 0) {
-      setTabBarVisible(true);
-      lastScrollTopRef.current = scrollTop;
-      return;
-    }
-    const delta = scrollTop - last;
-    lastScrollTopRef.current = scrollTop;
-    if (delta > SCROLL_THRESHOLD) setTabBarVisible(false);
-    else if (delta < -SCROLL_THRESHOLD) setTabBarVisible(true);
-  }, []);
-
-  /** 路由切换时重置上次滚动位置，避免跨页面误判方向 */
-  useEffect(() => {
-    lastScrollTopRef.current = -1;
-  }, [location.pathname]);
-
-  /** 监听移动端断点：切回桌面时恢复 Tab 栏显示 */
-  useEffect(() => {
-    const mq = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT}px)`);
-    const onChange = () => {
-      if (!mq.matches) setTabBarVisible(true);
-    };
-    mq.addEventListener('change', onChange);
-    return () => mq.removeEventListener('change', onChange);
+  /** 双击 header 时，将 main 滚动区域快速滚回顶部 */
+  const scrollMainToTop = useCallback(() => {
+    mainRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
   }, []);
 
   useEffect(() => {
@@ -122,52 +81,47 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
       data-page-font={settings.pageFont || 'system'}
       style={{ fontFamily: getPageFontFamily(settings.pageFont) }}
     >
-      {/* Header */}
+      {/* Header：fixed 保证任意滚动容器下都固定在视口顶部；左侧 Logo+标题，右侧 Tab 图标 */}
       {!isDetail && (
-        <header className="sticky top-0 z-50 glass px-6 py-4 flex items-center justify-between">
+        <header
+          className="fixed top-0 left-1/2 -translate-x-1/2 w-full max-w-2xl z-50 glass px-6 py-4 flex items-center justify-between cursor-pointer select-none border-b border-twilight-divider dark:border-nocturnal-secondary/25"
+          onDoubleClick={scrollMainToTop}
+          title="双击回到顶部"
+        >
           <div className="flex items-center gap-2">
             <OwlLogo size={26} stroke="currentColor" className="text-twilight-charcoal dark:text-nocturnal-primary" />
             <span className="serif text-2xl font-bold tracking-tight text-twilight-charcoal dark:text-nocturnal-primary">Wing</span>
           </div>
+          <nav className="flex items-center gap-1.5" aria-label="Main">
+            <NavLink
+              to="/"
+              className={({ isActive }) => `p-1.5 rounded-lg transition-colors ${isActive ? 'text-twilight-amber dark:text-nocturnal-accent' : 'text-twilight-duskLight dark:text-nocturnal-secondary hover:text-twilight-amber dark:hover:text-nocturnal-accent'}`}
+              title={t('recording')}
+            >
+              <MessageSquare size={20} />
+            </NavLink>
+            <NavLink
+              to="/journal"
+              className={({ isActive }) => `p-1.5 rounded-lg transition-colors ${isActive ? 'text-twilight-amber dark:text-nocturnal-accent' : 'text-twilight-duskLight dark:text-nocturnal-secondary hover:text-twilight-amber dark:hover:text-nocturnal-accent'}`}
+              title={t('journals')}
+            >
+              <BookOpen size={20} />
+            </NavLink>
+            <NavLink
+              to="/settings"
+              end={false}
+              className={({ isActive }) => `p-1.5 rounded-lg transition-colors ${isActive ? 'text-twilight-amber dark:text-nocturnal-accent' : 'text-twilight-duskLight dark:text-nocturnal-secondary hover:text-twilight-amber dark:hover:text-nocturnal-accent'}`}
+              title={t('settings')}
+            >
+              <SettingsIcon size={20} />
+            </NavLink>
+          </nav>
         </header>
       )}
 
-      {/* Main Content */}
-      <main
-        ref={mainRef}
-        className="flex-1 pb-24 overflow-y-auto"
-        onScroll={() => handleScroll(mainRef.current?.scrollTop ?? 0)}
-      >
+      <main ref={mainRef} className={`flex-1 overflow-y-auto ${!isDetail ? 'pt-[4.125rem]' : ''}`}>
         {children}
       </main>
-
-      {/* Bottom Nav：移动端滑动时向下隐藏、向上显示，带过渡动画 */}
-      {!isDetail && (
-        <nav className={`fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-2xl glass border-t border-twilight-divider dark:border-nocturnal-secondary/25 px-8 py-2 flex justify-around items-center z-50 transition-transform duration-300 ease-out ${tabBarVisible ? 'translate-y-0' : 'translate-y-full'}`}>
-          <NavLink 
-            to="/" 
-            className={({ isActive }) => `flex flex-col items-center gap-0.5 transition-colors ${isActive ? 'text-twilight-amber dark:text-nocturnal-accent' : 'text-twilight-duskLight dark:text-nocturnal-secondary'}`}
-          >
-            <MessageSquare size={18} />
-            <span className="text-[10px] font-medium uppercase tracking-wider">{t('recording')}</span>
-          </NavLink>
-          <NavLink 
-            to="/journal" 
-            className={({ isActive }) => `flex flex-col items-center gap-0.5 transition-colors ${isActive ? 'text-twilight-amber dark:text-nocturnal-accent' : 'text-twilight-duskLight dark:text-nocturnal-secondary'}`}
-          >
-            <BookOpen size={18} />
-            <span className="text-[10px] font-medium uppercase tracking-wider">{t('journals')}</span>
-          </NavLink>
-          <NavLink 
-            to="/settings"
-            end={false}
-            className={({ isActive }) => `flex flex-col items-center gap-0.5 transition-colors ${isActive ? 'text-twilight-amber dark:text-nocturnal-accent' : 'text-twilight-duskLight dark:text-nocturnal-secondary'}`}
-          >
-            <SettingsIcon size={18} />
-            <span className="text-[10px] font-medium uppercase tracking-wider">{t('settings')}</span>
-          </NavLink>
-        </nav>
-      )}
     </div>
   );
 };

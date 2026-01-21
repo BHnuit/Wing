@@ -15,6 +15,9 @@ const GAP = 2;
 const ROWS = 6;
 const MAX_DAYS = 365;
 
+/** 应用版本号，内测阶段以 0 开头，便于在设置页底部展示 */
+const APP_VERSION = '0.1.0';
+
 /** 最近 n 天的 YYYY-MM-DD 列表（从旧到新），使用本地时区 */
 function getDateList(n: number): string[] {
   const out: string[] = [];
@@ -223,6 +226,7 @@ const SettingsMainView: React.FC = () => {
       <div className="pt-8 flex flex-col items-center gap-2 opacity-40 dark:opacity-50">
         <OwlLogo size={20} />
         <p className="text-[10px] font-bold tracking-[0.2em] uppercase text-twilight-dusk dark:text-nocturnal-secondary">Wing</p>
+        <p className="text-[9px] font-normal text-twilight-duskLight dark:text-nocturnal-secondary">v{APP_VERSION}</p>
       </div>
     </div>
   );
