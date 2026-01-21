@@ -132,33 +132,25 @@ export const exportData = (): string => {
 };
 
 /**
- * 构建与本地导出一致的备份 ZIP（data.json 文本 + images/ 图片），供下载或云端同步使用
- * - data.json：entries 用 imageRefs（路径），sessions 的 fragments 用 imageRef（路径），无 base64
- * - images/：entry_{entryId}_{fragmentId}.{ext}、frag_{sessionId}_{fragmentId}.{ext}
- * - 若「备份所有设置」开启，data.json 还会包含 apiKeys、webdav、aiModels、aiBaseUrl、settings；否则仅日记与记录
- * @param entries 日记条目
- * @param sessions 日会话
- * @returns ZIP 的 Blob
+ * 准备备份数据：data.json 字符串与图片列表（ path + base64），供单 ZIP 或分卷构建使用
  */
-export async function buildBackupZip(entries: WingEntry[], sessions: DailySession[]): Promise<Blob> {
+function prepareBackupData(entries: WingEntry[], sessions: DailySession[]): { dataJson: string; imageList: { path: string; base64: string }[] } {
   const settings = MockDataService.getSettings();
-  const zip = new JSZip();
-
   /** 供 data.json 使用的结构：无 base64，只有图片路径引用 */
   type EntryForJson = Omit<WingEntry, 'images'> & { imageRefs?: Record<string, string> };
   type FragmentForJson = Omit<RawFragment, 'imageData'> & { imageRef?: string };
 
+  const imageList: { path: string; base64: string }[] = [];
   const entriesForJson: EntryForJson[] = [];
   for (const e of entries) {
     const { images, ...rest } = e;
-    const imageRefs: Record<string, string> | undefined = images && Object.keys(images).length > 0
-      ? {} : undefined;
+    const imageRefs: Record<string, string> | undefined = images && Object.keys(images).length > 0 ? {} : undefined;
     if (imageRefs && images) {
       for (const [fid, dataUrl] of Object.entries(images)) {
         const ext = getImageExtFromDataUrl(dataUrl);
         const path = `${IMAGES_FOLDER}/entry_${e.id}_${fid}${ext}`;
         imageRefs[fid] = path;
-        zip.file(path, getBase64FromDataUrl(dataUrl), { base64: true });
+        imageList.push({ path, base64: getBase64FromDataUrl(dataUrl) });
       }
     }
     entriesForJson.push({ ...rest, imageRefs });
@@ -171,7 +163,7 @@ export async function buildBackupZip(entries: WingEntry[], sessions: DailySessio
       if (f.type === FragmentType.IMAGE && imageData) {
         const ext = getImageExtFromDataUrl(imageData);
         const path = `${IMAGES_FOLDER}/frag_${s.id}_${f.id}${ext}`;
-        zip.file(path, getBase64FromDataUrl(imageData), { base64: true });
+        imageList.push({ path, base64: getBase64FromDataUrl(imageData) });
         return { ...rest, imageRef: path };
       }
       return { ...rest };
@@ -179,28 +171,89 @@ export async function buildBackupZip(entries: WingEntry[], sessions: DailySessio
     sessionsForJson.push({ ...s, fragments });
   }
 
-  const dataJson: Record<string, unknown> = {
+  const dataObj: Record<string, unknown> = {
     entries: entriesForJson,
     sessions: sessionsForJson,
     version: '1.0.0',
     timestamp: Date.now()
   };
   if (settings.backupApiKeys !== false) {
-    dataJson.apiKeys = settings.apiKeys || {};
-    dataJson.webdav = {
-      webdavUrl: settings.webdavUrl || '',
-      webdavUser: settings.webdavUser || '',
-      webdavPass: settings.webdavPass || ''
-    };
-    dataJson.aiModels = settings.aiModels || {};
-    dataJson.aiBaseUrl = settings.aiBaseUrl ?? '';
+    dataObj.apiKeys = settings.apiKeys || {};
+    dataObj.webdav = { webdavUrl: settings.webdavUrl || '', webdavUser: settings.webdavUser || '', webdavPass: settings.webdavPass || '' };
+    dataObj.aiModels = settings.aiModels || {};
+    dataObj.aiBaseUrl = settings.aiBaseUrl ?? '';
     const s = getExportSettings(settings);
-    if (s) dataJson.settings = s;
+    if (s) dataObj.settings = s;
   }
-
-  zip.file('data.json', JSON.stringify(dataJson, null, 2));
-  return zip.generateAsync({ type: 'blob' });
+  return { dataJson: JSON.stringify(dataObj, null, 2), imageList };
 }
+
+const FILE_SIZE_LIMIT = 5.5 * 1024 * 1024;
+const SPLIT_CHUNK_RAW = 4.5 * 1024 * 1024; // 每卷约 4.5MB 原始，ZIP 后通常 < 6MB
+const MAX_SPLIT_PARTS = 20;
+
+/**
+ * 构建与本地导出一致的备份 ZIP（data.json 文本 + images/ 图片），供下载或云端同步使用
+ * 使用 DEFLATE level 9 压缩以尽量减小体积
+ */
+export async function buildBackupZip(entries: WingEntry[], sessions: DailySession[]): Promise<Blob> {
+  const { dataJson, imageList } = prepareBackupData(entries, sessions);
+  const zip = new JSZip();
+  zip.file('data.json', dataJson);
+  for (const { path, base64 } of imageList) {
+    zip.file(path, base64, { base64: true });
+  }
+  return zip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 9 } });
+}
+
+/**
+ * 构建备份：若单 ZIP ≤ 5.5MB 返回单文件；否则返回分卷（data.json + 多个 images_*.zip）
+ * 用于云盘上传，以规避 Netlify 6MB 请求体限制。
+ */
+export async function buildBackupZipOrSplit(
+  entries: WingEntry[],
+  sessions: DailySession[]
+): Promise<{ mode: 'single'; blob: Blob } | { mode: 'split'; baseName: string; dataJson: string; imageZipBlobs: Blob[] }> {
+  const { dataJson, imageList } = prepareBackupData(entries, sessions);
+  const zip = new JSZip();
+  zip.file('data.json', dataJson);
+  for (const { path, base64 } of imageList) {
+    zip.file(path, base64, { base64: true });
+  }
+  const blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 9 } });
+  if (blob.size <= FILE_SIZE_LIMIT) {
+    return { mode: 'single', blob };
+  }
+  // 分卷：按原始大小把 imageList 切成多块，每块打成一个 ZIP
+  const chunks: { path: string; base64: string }[][] = [];
+  let acc: { path: string; base64: string }[] = [];
+  let accRaw = 0;
+  for (const img of imageList) {
+    const raw = Math.ceil((img.base64.length * 3) / 4);
+    if (accRaw + raw > SPLIT_CHUNK_RAW && acc.length > 0) {
+      chunks.push(acc);
+      acc = [];
+      accRaw = 0;
+    }
+    acc.push(img);
+    accRaw += raw;
+  }
+  if (acc.length > 0) chunks.push(acc);
+
+  const imageZipBlobs: Blob[] = [];
+  for (let i = 0; i < chunks.length; i++) {
+    const z = new JSZip();
+    for (const { path, base64 } of chunks[i]) {
+      z.file(path, base64, { base64: true });
+    }
+    imageZipBlobs.push(await z.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 9 } }));
+  }
+  const baseName = `wing-backup-${getLocalDateString()}`;
+  return { mode: 'split', baseName, dataJson, imageZipBlobs };
+}
+
+/** 分卷数上限，超过则走方案3 兜底（保存到本地） */
+export const BACKUP_MAX_SPLIT_PARTS = MAX_SPLIT_PARTS;
 
 /**
  * 导出数据并下载为 ZIP：data.json 仅存文本，图片放入 images/ 文件夹
@@ -241,12 +294,6 @@ async function resolveDataFromZip(zip: JSZip): Promise<{ data: ExportData | null
   if (!parsed.entries || !Array.isArray(parsed.entries) || !parsed.sessions || !Array.isArray(parsed.sessions)) {
     return { data: null, message: '无效的数据格式' };
   }
-
-  /** 从路径取扩展名，如 "images/xx.png" -> ".png" */
-  const extOf = (p: string) => {
-    const i = p.lastIndexOf('.');
-    return i >= 0 ? p.slice(i) : '.png';
-  };
 
   const entries: WingEntry[] = [];
   for (const e of parsed.entries as (WingEntry & { imageRefs?: Record<string, string> })[]) {
@@ -295,6 +342,122 @@ async function resolveDataFromZip(zip: JSZip): Promise<{ data: ExportData | null
     settings: parsed.settings
   };
   return { data, message: '' };
+}
+
+/** 从路径取扩展名，如 "images/xx.png" -> ".png" */
+function extOf(p: string): string {
+  const i = p.lastIndexOf('.');
+  return i >= 0 ? p.slice(i) : '.png';
+}
+
+/**
+ * 从分卷备份（data.json 字符串 + 多个 images 的 ZIP Blob）解析出 ExportData
+ * imageMap 的 key 为 images/xxx 路径，由调用方从 imageZipBlobs 合并得到
+ */
+function resolveDataFromImageMap(
+  parsed: {
+    entries?: unknown[];
+    sessions?: unknown[];
+    version?: string;
+    timestamp?: number;
+    apiKeys?: unknown;
+    webdav?: unknown;
+    aiModels?: unknown;
+    aiBaseUrl?: unknown;
+    settings?: unknown;
+  },
+  imageMap: Record<string, string>
+): { data: ExportData | null; message: string } {
+  if (!parsed.entries || !Array.isArray(parsed.entries) || !parsed.sessions || !Array.isArray(parsed.sessions)) {
+    return { data: null, message: '无效的数据格式' };
+  }
+  const entries: WingEntry[] = [];
+  for (const e of parsed.entries as (WingEntry & { imageRefs?: Record<string, string> })[]) {
+    const { imageRefs, images: _im, ...rest } = e;
+    const images: Record<string, string> = {};
+    if (imageRefs && typeof imageRefs === 'object') {
+      for (const [fid, path] of Object.entries(imageRefs)) {
+        const b64 = imageMap[path];
+        if (b64) {
+          images[fid] = `data:${mimeFromExt(extOf(path))};base64,${b64}`;
+        }
+      }
+    }
+    entries.push({ ...rest, images: Object.keys(images).length > 0 ? images : undefined } as WingEntry);
+  }
+  const sessions: DailySession[] = [];
+  for (const s of parsed.sessions as (DailySession & { fragments?: (RawFragment & { imageRef?: string })[] })[]) {
+    const fragments: RawFragment[] = [];
+    for (const f of s.fragments || []) {
+      const { imageRef, imageData: _id, ...rest } = f;
+      let imageData: string | undefined;
+      if (imageRef && typeof imageRef === 'string') {
+        const b64 = imageMap[imageRef];
+        if (b64) imageData = `data:${mimeFromExt(extOf(imageRef))};base64,${b64}`;
+      }
+      fragments.push({ ...rest, imageData } as RawFragment);
+    }
+    sessions.push({ ...s, fragments });
+  }
+  const data: ExportData = {
+    entries,
+    sessions,
+    version: parsed.version || '1.0.0',
+    timestamp: parsed.timestamp || Date.now(),
+    apiKeys: parsed.apiKeys,
+    webdav: parsed.webdav,
+    aiModels: parsed.aiModels,
+    aiBaseUrl: parsed.aiBaseUrl,
+    settings: parsed.settings
+  };
+  return { data, message: '' };
+}
+
+/**
+ * 从分卷备份恢复：data.json 字符串 + 多个 images 的 ZIP Blob，合并后替换/导入
+ */
+async function buildImageMapFromZipBlobs(imageZipBlobs: Blob[]): Promise<Record<string, string>> {
+  const imageMap: Record<string, string> = {};
+  for (const b of imageZipBlobs) {
+    const z = await JSZip.loadAsync(b);
+    for (const [path, f] of Object.entries(z.files)) {
+      if (path.startsWith('images/') && !f.dir) {
+        const b64 = await f.async('base64');
+        imageMap[path] = b64;
+      }
+    }
+  }
+  return imageMap;
+}
+
+/**
+ * 用分卷备份（data.json 字符串 + images 的 ZIP Blob 数组）完全替换本地数据
+ */
+export async function replaceDataFromSplit(jsonContent: string, imageZipBlobs: Blob[]): Promise<{ success: boolean; message: string }> {
+  try {
+    const parsed = JSON.parse(jsonContent) as Parameters<typeof resolveDataFromImageMap>[0];
+    const imageMap = await buildImageMapFromZipBlobs(imageZipBlobs);
+    const { data, message } = resolveDataFromImageMap(parsed, imageMap);
+    if (!data) return { success: false, message: message || '无效的备份数据' };
+    return applyReplace(data);
+  } catch (e) {
+    return { success: false, message: `替换失败: ${e instanceof Error ? e.message : '未知错误'}` };
+  }
+}
+
+/**
+ * 用分卷备份（data.json 字符串 + images 的 ZIP Blob 数组）合并导入到现有数据
+ */
+export async function importDataFromSplit(jsonContent: string, imageZipBlobs: Blob[]): Promise<{ success: boolean; message: string }> {
+  try {
+    const parsed = JSON.parse(jsonContent) as Parameters<typeof resolveDataFromImageMap>[0];
+    const imageMap = await buildImageMapFromZipBlobs(imageZipBlobs);
+    const { data, message } = resolveDataFromImageMap(parsed, imageMap);
+    if (!data) return { success: false, message: message || '无效的备份数据' };
+    return applyImportMerge(data);
+  } catch (e) {
+    return { success: false, message: `导入失败: ${e instanceof Error ? e.message : '未知错误'}` };
+  }
 }
 
 /**

@@ -6,7 +6,7 @@
 import { WingEntry, DailySession, AppSettings } from '../types';
 import { getLocalDateString } from '../utils/date';
 import { MockDataService } from './mockDataService';
-import { buildBackupZip } from './dataService';
+import { buildBackupZip, buildBackupZipOrSplit, BACKUP_MAX_SPLIT_PARTS } from './dataService';
 
 // 坚果云默认配置
 const JIANGUOYUN_DEFAULT_URL = 'https://dav.jianguoyun.com/dav/';
@@ -21,6 +21,8 @@ export interface SyncStatus {
   success: boolean;
   message: string;
   timestamp?: number;
+  /** 方案3 兜底：上传不可行时改为保存到本地，由调用方触发下载并提示用户手动上传云盘 */
+  fallbackDownload?: Blob;
 }
 
 /**
@@ -258,27 +260,110 @@ export class WebDAVService {
   }
 
   /**
-   * 备份所有数据到 WebDAV，ZIP 结构与本地导出一致：data.json（文本）+ images/（图片）
-   * 若备份包超过 Netlify 请求体限制（约 6MB），会提前提示，避免上传失败。
+   * 备份所有数据到 WebDAV：单 ZIP（≤5.5MB）或分卷（data.json + images_*.zip）。
+   * 分卷数超过上限或上传失败时走方案3 兜底：返回 fallbackDownload，由调用方触发下载并提示用户手动上传云盘。
    */
   async backupData(entries: WingEntry[], sessions: DailySession[]): Promise<SyncStatus> {
     try {
-      const blob = await buildBackupZip(entries, sessions);
-      const FILE_SIZE_LIMIT = 5.5 * 1024 * 1024;
-      if (blob.size > FILE_SIZE_LIMIT) {
+      const prepared = await buildBackupZipOrSplit(entries, sessions);
+
+      if (prepared.mode === 'single') {
+        const fileName = `wing-backup-${getLocalDateString()}.zip`;
+        return await this.uploadBlob(fileName, prepared.blob, 'application/zip');
+      }
+
+      if (prepared.imageZipBlobs.length > BACKUP_MAX_SPLIT_PARTS) {
+        const fullBlob = await buildBackupZip(entries, sessions);
         return {
           success: false,
-          message: `备份包过大（${(blob.size / 1024 / 1024).toFixed(1)}MB），超过 Netlify 代理约 6MB 限制。请删除部分日记或图片后重试。`
+          message: '备份分卷过多，已改为保存到本地，请手动上传到云盘。',
+          fallbackDownload: fullBlob
         };
       }
-      const fileName = `wing-backup-${getLocalDateString()}.zip`;
-      return await this.uploadBlob(fileName, blob, 'application/zip');
+
+      const ru = await this.uploadFile(`${prepared.baseName}.json`, prepared.dataJson);
+      if (!ru.success) {
+        const fullBlob = await buildBackupZip(entries, sessions);
+        return { success: false, message: ru.message, fallbackDownload: fullBlob };
+      }
+      for (let i = 0; i < prepared.imageZipBlobs.length; i++) {
+        const r = await this.uploadBlob(`${prepared.baseName}_images_${i + 1}.zip`, prepared.imageZipBlobs[i], 'application/zip');
+        if (!r.success) {
+          const fullBlob = await buildBackupZip(entries, sessions);
+          return { success: false, message: r.message, fallbackDownload: fullBlob };
+        }
+      }
+      return { success: true, message: '备份成功', timestamp: Date.now() };
     } catch (error) {
-      return {
-        success: false,
-        message: `备份失败: ${error instanceof Error ? error.message : '未知错误'}`
-      };
+      try {
+        const fullBlob = await buildBackupZip(entries, sessions);
+        return {
+          success: false,
+          message: `备份失败: ${error instanceof Error ? error.message : '未知错误'}`,
+          fallbackDownload: fullBlob
+        };
+      } catch {
+        return {
+          success: false,
+          message: `备份失败: ${error instanceof Error ? error.message : '未知错误'}`
+        };
+      }
     }
+  }
+
+  /**
+   * 将平面文件列表分组为「单文件备份」与「分卷备份」集合，供还原 UI 使用
+   */
+  static groupBackupSets(files: { name: string; lastModified: number }[]): {
+    single: { name: string; lastModified: number }[];
+    split: { jsonName: string; imageNames: string[]; lastModified: number }[];
+  } {
+    const single = files.filter((f) => /^wing-backup-\d{4}-\d{2}-\d{2}\.zip$/.test(f.name));
+    const jsonFiles = files.filter((f) => /^wing-backup-(\d{4}-\d{2}-\d{2})\.json$/.test(f.name));
+    const split: { jsonName: string; imageNames: string[]; lastModified: number }[] = [];
+    for (const j of jsonFiles) {
+      const date = j.name.replace(/^wing-backup-(\d{4}-\d{2}-\d{2})\.json$/, '$1');
+      const imageFiles = files
+        .filter((f) => new RegExp(`^wing-backup-${date.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}_images_\\d+\\.zip$`).test(f.name))
+        .sort((a, b) => {
+          const na = parseInt(a.name.match(/_images_(\d+)/)?.[1] ?? '0', 10);
+          const nb = parseInt(b.name.match(/_images_(\d+)/)?.[1] ?? '0', 10);
+          return na - nb;
+        });
+      split.push({
+        jsonName: j.name,
+        imageNames: imageFiles.map((x) => x.name),
+        lastModified: imageFiles.length ? Math.max(j.lastModified, ...imageFiles.map((x) => x.lastModified)) : j.lastModified
+      });
+    }
+    return { single: single.map((f) => ({ name: f.name, lastModified: f.lastModified })), split };
+  }
+
+  /**
+   * 下载一个备份集合：单文件返回 File；分卷返回 jsonContent + imageZipBlobs
+   */
+  async downloadBackupSet(
+    set: { type: 'single'; name: string } | { type: 'split'; jsonName: string; imageNames: string[] }
+  ): Promise<
+    | { type: 'single'; file: File }
+    | { type: 'split'; jsonContent: string; imageZipBlobs: Blob[] }
+    | { success: false; message: string }
+  > {
+    if (set.type === 'single') {
+      const r = await this.downloadBackupFile(set.name);
+      if (!r.success || !r.file) return { success: false, message: r.message };
+      return { type: 'single', file: r.file };
+    }
+    const rj = await this.downloadBackupFile(set.jsonName);
+    if (!rj.success || !rj.file) return { success: false, message: rj.message };
+    const jsonContent = await rj.file.text();
+    const imageZipBlobs: Blob[] = [];
+    for (const n of set.imageNames) {
+      const ri = await this.downloadBackupFile(n);
+      if (!ri.success || !ri.file) return { success: false, message: ri.message };
+      imageZipBlobs.push(ri.file);
+    }
+    return { type: 'split', jsonContent, imageZipBlobs };
   }
 
   /**

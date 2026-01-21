@@ -6,8 +6,9 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Cloud, Download, Upload, Replace, RefreshCw, CheckCircle2, XCircle, Loader2, Trash2, Eye, EyeOff } from 'lucide-react';
 import { MockDataService } from '../services/mockDataService';
-import { createWebDAVService } from '../services/webdavService';
-import { downloadData, importData, replaceData } from '../services/dataService';
+import { createWebDAVService, WebDAVService } from '../services/webdavService';
+import { downloadData, importData, replaceData, replaceDataFromSplit, importDataFromSplit } from '../services/dataService';
+import { getLocalDateString } from '../utils/date';
 import { useTranslation } from '../i18n';
 import { useToast } from './ErrorToast';
 
@@ -20,7 +21,7 @@ const SettingsStorageView: React.FC = () => {
   const [showClearModal, setShowClearModal] = useState(false);
   const [showRestoreModal, setShowRestoreModal] = useState(false);
   const [restoreMode, setRestoreMode] = useState<'import' | 'replace'>('import');
-  const [restoreFiles, setRestoreFiles] = useState<{ name: string; lastModified: number }[]>([]);
+  const [restoreSets, setRestoreSets] = useState<{ single: { name: string; lastModified: number }[]; split: { jsonName: string; imageNames: string[]; lastModified: number }[] } | null>(null);
   const [restoreSelected, setRestoreSelected] = useState('');
   const [restoreLoading, setRestoreLoading] = useState(false);
   /** 是否明文显示 WebDAV 密码，默认打码 */
@@ -75,7 +76,7 @@ const SettingsStorageView: React.FC = () => {
     setTimeout(() => setSyncStatus({ type: 'idle' }), 3000);
   };
 
-  /** 备份到云盘：与本地导出一致，ZIP（data.json + images/）上传 */
+  /** 备份到云盘：单 ZIP 或分卷上传；若返回 fallbackDownload 则触发下载并提示用户手动上传云盘（方案3 兜底） */
   const handleBackup = async () => {
     setSyncStatus({ type: 'syncing', message: t('webdav_backuping') });
     const svc = createWebDAVService(settings);
@@ -87,11 +88,23 @@ const SettingsStorageView: React.FC = () => {
     const entries = MockDataService.getEntries();
     const sessions = MockDataService.getSessions();
     const r = await svc.backupData(entries, sessions);
+
+    if (r.fallbackDownload) {
+      const url = URL.createObjectURL(r.fallbackDownload);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `wing-backup-${getLocalDateString()}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      showToast(t('backup_fallback_saved_local'), 'success');
+    }
     setSyncStatus({ type: r.success ? 'success' : 'error', message: r.success ? t('webdav_backup_success') : r.message });
     setTimeout(() => setSyncStatus({ type: 'idle' }), 3000);
   };
 
-  /** 打开从云盘导入/替换弹窗：先拉取备份列表；mode 决定后续走 importData 或 replaceData */
+  /** 打开从云盘导入/替换弹窗：拉取备份列表并分组为单文件/分卷，mode 决定后续 import 或 replace */
   const handleRestoreOpen = async (mode: 'import' | 'replace') => {
     const svc = createWebDAVService(settings);
     if (!svc) {
@@ -101,7 +114,7 @@ const SettingsStorageView: React.FC = () => {
     setRestoreMode(mode);
     setRestoreLoading(true);
     setShowRestoreModal(true);
-    setRestoreFiles([]);
+    setRestoreSets(null);
     setRestoreSelected('');
     const r = await svc.listBackupFiles();
     setRestoreLoading(false);
@@ -110,13 +123,15 @@ const SettingsStorageView: React.FC = () => {
       setShowRestoreModal(false);
       return;
     }
-    setRestoreFiles(r.files);
-    setRestoreSelected(r.files[0].name);
+    const groups = WebDAVService.groupBackupSets(r.files);
+    setRestoreSets(groups);
+    const first = groups.single[0] ? `single:${groups.single[0].name}` : groups.split[0] ? `split:${groups.split[0].jsonName}` : '';
+    setRestoreSelected(first);
   };
 
-  /** 从云盘导入或替换：下载所选备份后走 importData（合并）或 replaceData（覆盖），与本地逻辑一致 */
+  /** 从云盘导入或替换：按选中项下载单文件或分卷，走 importData/replaceData 或 importDataFromSplit/replaceDataFromSplit */
   const handleRestoreConfirm = async () => {
-    if (!restoreSelected) return;
+    if (!restoreSelected || !restoreSets) return;
     const confirmMsg = restoreMode === 'replace' ? t('confirm_replace') : t('webdav_import_confirm');
     if (!window.confirm(confirmMsg)) return;
     const svc = createWebDAVService(settings);
@@ -124,15 +139,29 @@ const SettingsStorageView: React.FC = () => {
       showToast('请先填写 WebDAV 配置', 'error');
       return;
     }
+    const set = restoreSelected.startsWith('single:')
+      ? { type: 'single' as const, name: restoreSelected.slice(7) }
+      : {
+          type: 'split' as const,
+          jsonName: restoreSelected.slice(6),
+          imageNames: restoreSets.split.find((s) => s.jsonName === restoreSelected.slice(6))?.imageNames ?? []
+        };
     setSyncStatus({ type: 'syncing', message: restoreMode === 'import' ? t('webdav_importing') : t('webdav_replacing') });
     setShowRestoreModal(false);
-    const down = await svc.downloadBackupFile(restoreSelected);
-    if (!down.success || !down.file) {
+    const down = await svc.downloadBackupSet(set);
+    if ('success' in down && down.success === false) {
       setSyncStatus({ type: 'error', message: down.message });
       setTimeout(() => setSyncStatus({ type: 'idle' }), 3000);
       return;
     }
-    const r = restoreMode === 'import' ? await importData(down.file) : await replaceData(down.file);
+    const r =
+      down.type === 'single'
+        ? restoreMode === 'import'
+          ? await importData(down.file)
+          : await replaceData(down.file)
+        : restoreMode === 'import'
+          ? await importDataFromSplit(down.jsonContent, down.imageZipBlobs)
+          : await replaceDataFromSplit(down.jsonContent, down.imageZipBlobs);
     setSyncStatus({ type: r.success ? 'success' : 'error', message: r.message });
     setTimeout(() => setSyncStatus({ type: 'idle' }), 3000);
     if (r.success) setTimeout(() => window.location.reload(), 1500);
@@ -399,11 +428,20 @@ const SettingsStorageView: React.FC = () => {
                   onChange={(e) => setRestoreSelected(e.target.value)}
                   className="w-full bg-twilight-cream/50 dark:bg-nocturnal-bg/70 dark:text-nocturnal-primary border border-twilight-divider dark:border-nocturnal-secondary/25 rounded-xl px-4 py-3 mb-4 focus:outline-none focus:ring-2 focus:ring-twilight-amber/30 dark:focus:ring-nocturnal-accent/40"
                 >
-                  {restoreFiles.map((f) => (
-                    <option key={f.name} value={f.name}>
-                      {f.name} ({new Date(f.lastModified).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' })})
-                    </option>
-                  ))}
+                  {!restoreSets ? null : (
+                    <>
+                      {restoreSets.single.map((s) => (
+                        <option key={`single:${s.name}`} value={`single:${s.name}`}>
+                          {s.name} ({t('webdav_backup_single')}) {new Date(s.lastModified).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' })}
+                        </option>
+                      ))}
+                      {restoreSets.split.map((s) => (
+                        <option key={`split:${s.jsonName}`} value={`split:${s.jsonName}`}>
+                          {s.jsonName.replace(/\.json$/, '')} ({t('webdav_backup_split')}) {new Date(s.lastModified).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' })}
+                        </option>
+                      ))}
+                    </>
+                  )}
                 </select>
                 <p className="text-[11px] text-twilight-duskLight dark:text-nocturnal-secondary mb-4">
                   {restoreMode === 'replace' ? t('confirm_replace') : t('webdav_import_confirm')}
