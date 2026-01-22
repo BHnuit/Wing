@@ -1,5 +1,6 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { RawFragment, WingEntry, WingTodo, Language, WritingStyle } from "../types";
+import { formatTimestampForPrompt } from "../utils/date";
 
 /** 获取系统提示词（供 Gemini 与 OpenAI 兼容接口共用） */
 export const getSystemInstruction = (lang: Language) => `Role: 你是 Wing App 的智能内核，一位敏锐的传记作家和心理咨询师。
@@ -40,6 +41,10 @@ export const getSystemInstructionForSynthesis = (
   lang: Language,
   opts?: { writingStyle?: WritingStyle; writingStylePrompt?: string }
 ) => {
+  const timeNote = lang === 'zh' 
+    ? '每条记录前的时间戳（如「上午 10:30」「下午 3:15」）表示用户记录时的具体时间，请结合时间信息理解记录的情景与情绪变化，在撰写日记时自然地体现时间脉络。'
+    : 'The timestamp before each record (e.g., "10:30 AM", "3:15 PM") indicates the specific time when the user made the record. Please use this time information to understand the context and emotional changes, and naturally reflect the timeline in the diary.';
+  
   const base = `Role: 你是 Wing App 的智能内核，一位敏锐的传记作家。
 
 Task: 接收用户一天内的碎片化记录，将其重组为结构化数据。
@@ -49,7 +54,8 @@ Output Requirement:
 1. 必须只输出纯 JSON 字符串，不要包含 Markdown 标记。
 2. JSON 格式必须符合定义的 Schema。
 3. 文笔需流畅、内省。如果原文包含图片，须在 content_markdown 中保留 [Image] 标记，数量与输入一致。
-4. mood 必须为单个 emoji，**仅根据日记与记录内容**选取，禁止输出文字（如 happy、晴朗、calm）。`;
+4. mood 必须为单个 emoji，**仅根据日记与记录内容**选取，禁止输出文字（如 happy、晴朗、calm）。
+5. ${timeNote}`;
   const style = getWritingStylePrompt(opts?.writingStyle, opts?.writingStylePrompt);
   return base + style;
 };
@@ -91,6 +97,10 @@ export const getSystemInstructionForBodyOnly = (
   lang: Language,
   opts?: { writingStyle?: WritingStyle; writingStylePrompt?: string }
 ) => {
+  const timeNote = lang === 'zh' 
+    ? '每条记录前的时间戳（如「上午 10:30」「下午 3:15」）表示用户记录时的具体时间，请结合时间信息理解记录的情景与情绪变化，在撰写日记时自然地体现时间脉络。'
+    : 'The timestamp before each record (e.g., "10:30 AM", "3:15 PM") indicates the specific time when the user made the record. Please use this time information to understand the context and emotional changes, and naturally reflect the timeline in the diary.';
+  
   const base = `Role: 你是 Wing App 的智能内核，一位敏锐的传记作家。
 
 Task: 根据用户一天内的碎片化记录，**仅**撰写第一人称日记正文（Markdown）。不输出标题、心情、概括、待办等，只输出 JSON 中的 content_markdown 字段。
@@ -98,7 +108,8 @@ Language: Output MUST be in ${lang === 'zh' ? 'Simplified Chinese' : 'English'}�
 
 Output Requirement:
 1. 必须只输出纯 JSON，形如 {"content_markdown":"..."}，不要包含 Markdown 代码块。
-2. 文笔需流畅、内省。若输入中有 [Image]，须在正文对应位置保留 [Image]，数量与输入一致。`;
+2. 文笔需流畅、内省。若输入中有 [Image]，须在正文对应位置保留 [Image]，数量与输入一致。
+3. ${timeNote}`;
   const style = getWritingStylePrompt(opts?.writingStyle, opts?.writingStylePrompt);
   return base + style;
 };
@@ -203,7 +214,7 @@ export const GeminiService = {
         
         const inputContext = fragments
           .sort((a, b) => a.timestamp - b.timestamp)
-          .map(f => `[${new Date(f.timestamp).toLocaleTimeString()}] ${f.type === 'IMAGE' ? '[Image]' : ''} ${safeFragmentContentForPrompt(f)}`)
+          .map(f => `[${formatTimestampForPrompt(f.timestamp, lang)}] ${f.type === 'IMAGE' ? '[Image]' : ''} ${safeFragmentContentForPrompt(f)}`)
           .join('\n');
 
         let fullInput = `这是用户今天的记录：\n\n${inputContext}`;
@@ -294,7 +305,7 @@ export const GeminiService = {
 
     const inputContext = fragments
       .sort((a, b) => a.timestamp - b.timestamp)
-      .map(f => `[${new Date(f.timestamp).toLocaleTimeString()}] ${f.type === 'IMAGE' ? '[Image]' : ''} ${safeFragmentContentForPrompt(f)}`)
+      .map(f => `[${formatTimestampForPrompt(f.timestamp, lang)}] ${f.type === 'IMAGE' ? '[Image]' : ''} ${safeFragmentContentForPrompt(f)}`)
       .join('\n');
 
     let fullInput = `这是用户今天的记录：\n\n${inputContext}`;
@@ -358,7 +369,8 @@ export const GeminiService = {
     previousGeneration?: string,
     model?: string,
     writingStyle?: WritingStyle,
-    writingStylePrompt?: string
+    writingStylePrompt?: string,
+    customPrompt?: string
   ): Promise<{ markdownContent: string }> {
     const key = apiKey || process.env.API_KEY || process.env.GEMINI_API_KEY;
     if (!key) throw new GeminiAPIError('API Key is missing. Please configure it in settings.', 'MISSING_API_KEY');
@@ -366,12 +378,15 @@ export const GeminiService = {
 
     const inputContext = fragments
       .sort((a, b) => a.timestamp - b.timestamp)
-      .map(f => `[${new Date(f.timestamp).toLocaleTimeString()}] ${f.type === 'IMAGE' ? '[Image]' : ''} ${safeFragmentContentForPrompt(f)}`)
+      .map(f => `[${formatTimestampForPrompt(f.timestamp, lang)}] ${f.type === 'IMAGE' ? '[Image]' : ''} ${safeFragmentContentForPrompt(f)}`)
       .join('\n');
     let fullInput = `这是用户今天的记录：\n\n${inputContext}`;
     if (previousGeneration?.trim()) {
       const pg = previousGeneration.length > 30000 ? previousGeneration.slice(0, 30000) + '\n\n...(正文过长已截断)' : previousGeneration;
       fullInput += `\n\n[已生成的日记正文，供重新生成时参考]\n${pg}\n\n【重新生成】content_markdown 必须为**重新撰写**的正文，禁止逐字照抄。`;
+    }
+    if (customPrompt?.trim()) {
+      fullInput += `\n\n【用户自定义要求】\n${customPrompt.trim()}`;
     }
 
     let lastError: Error | null = null;
@@ -421,7 +436,7 @@ export const GeminiService = {
 
     const inputContext = fragments
       .sort((a, b) => a.timestamp - b.timestamp)
-      .map(f => `[${new Date(f.timestamp).toLocaleTimeString()}] ${f.type === 'IMAGE' ? '[Image]' : ''} ${safeFragmentContentForPrompt(f)}`)
+      .map(f => `[${formatTimestampForPrompt(f.timestamp, lang)}] ${f.type === 'IMAGE' ? '[Image]' : ''} ${safeFragmentContentForPrompt(f)}`)
       .join('\n');
     let fullInput = `这是用户今天的记录：\n\n${inputContext}`;
     if (previousGeneration?.trim()) {

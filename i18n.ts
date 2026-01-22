@@ -212,9 +212,12 @@ export const translations = {
     regenerate: '重新生成',
     regen_menu: '重新AI生成',
     regenerate_modal_title: '重新生成日记',
-    regenerate_modal_desc: '将合并当日所有记录（含本次日记）重新生成。请选择：',
+    regenerate_modal_desc: '将仅重新生成正文，标题、概括等保持不变。请选择：',
     regenerate_overwrite: '覆盖当前',
     regenerate_new_version: '另存为新版本',
+    regen_custom_prompt_label: '自定义提示语（可选）',
+    regen_custom_prompt_placeholder: '例如：请更详细地描述下午的会议内容，或者：请用更轻松的语气重写',
+    regen_custom_prompt_hint: '可在此输入额外的要求，帮助 AI 更好地调整生成内容',
     regen_success: '日记已重新生成',
     regen_failed: '重新生成失败',
     copy: '复制',
@@ -250,7 +253,15 @@ export const translations = {
     synth_status_done: '日记已生成',
     synth_status_syncing: '正在同步到云盘…',
     /** 创建日记时的临时标题，{date} 为 YYYY-MM-DD */
-    synth_temp_title: '《{date} 生成中》'
+    synth_temp_title: '《{date} 生成中》',
+    /** PWA 安装提示 */
+    pwa_install_title: '安装 Wing',
+    pwa_install_desc: '将 Wing 添加到主屏幕，享受更快的访问和离线体验',
+    pwa_install_button: '安装应用',
+    pwa_install_dismiss: '稍后',
+    pwa_installed: '已安装',
+    pwa_offline: '离线模式',
+    pwa_online: '在线'
   },
   en: {
     recording: 'Recording',
@@ -449,9 +460,12 @@ export const translations = {
     regenerate: 'Regenerate',
     regen_menu: 'Regenerate with AI',
     regenerate_modal_title: 'Regenerate Journal',
-    regenerate_modal_desc: 'Merge all records of the day (including this journal) and regenerate. Choose:',
+    regenerate_modal_desc: 'Only the body will be regenerated. Title, summary, etc. will remain unchanged. Choose:',
     regenerate_overwrite: 'Overwrite current',
     regenerate_new_version: 'Save as new version',
+    regen_custom_prompt_label: 'Custom Prompt (Optional)',
+    regen_custom_prompt_placeholder: 'e.g., Please describe the afternoon meeting in more detail, or: Please rewrite in a lighter tone',
+    regen_custom_prompt_hint: 'Enter additional requirements here to help AI better adjust the generated content',
     regen_success: 'Journal regenerated',
     regen_failed: 'Regeneration failed',
     copy: 'Copy',
@@ -485,7 +499,14 @@ export const translations = {
     synth_status_insight: 'Generating insight and todos…',
     synth_status_done: 'Journal ready',
     synth_status_syncing: 'Syncing to cloud…',
-    synth_temp_title: '《{date} Generating》'
+    synth_temp_title: '《{date} Generating》',
+    pwa_install_title: 'Install Wing',
+    pwa_install_desc: 'Add Wing to your home screen for faster access and offline experience',
+    pwa_install_button: 'Install App',
+    pwa_install_dismiss: 'Later',
+    pwa_installed: 'Installed',
+    pwa_offline: 'Offline',
+    pwa_online: 'Online'
   }
 };
 

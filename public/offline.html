@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wing - 离线</title>
+    <link rel="icon" type="image/svg+xml" href="/OwlLogo.svg" />
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: #FAF9F4;
+            color: #4A3B32;
+        }
+        html.dark body {
+            background: #1A1B26;
+            color: #A9B1D6;
+        }
+    </style>
+</head>
+<body class="min-h-screen flex items-center justify-center p-4">
+    <div class="text-center max-w-md">
+        <div class="mb-6">
+            <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="mx-auto text-twilight-amber dark:text-nocturnal-accent">
+                <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path>
+                <circle cx="12" cy="10" r="3"></circle>
+            </svg>
+        </div>
+        <h1 class="text-2xl font-bold mb-2 text-twilight-charcoal dark:text-nocturnal-primary">无法连接到网络</h1>
+        <p class="text-twilight-duskLight dark:text-nocturnal-secondary mb-6">
+            你当前处于离线状态。请检查网络连接后刷新页面。
+        </p>
+        <button 
+            onclick="window.location.reload()" 
+            class="px-6 py-2 bg-twilight-amber dark:bg-nocturnal-accent text-white rounded-lg hover:opacity-90 transition-opacity"
+        >
+            刷新页面
+        </button>
+    </div>
+    <script>
+        // 检测网络状态
+        window.addEventListener('online', () => {
+            window.location.reload();
+        });
+    </script>
+</body>
+</html>

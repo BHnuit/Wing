@@ -53,6 +53,8 @@ export interface AiProxyBody {
   /** 文风与自定义提示词（synthesize、synthesizeBody 时生效） */
   writingStyle?: WritingStyle;
   writingStylePrompt?: string;
+  /** 用户自定义提示语（synthesizeBody 时生效，用于纠正细节） */
+  customPrompt?: string;
   /** synthesizeMeta */
   markdownContent?: string;
   /** synthesizeInsightAndTodos */
@@ -149,7 +151,7 @@ export async function handleAiRequest(body: AiProxyBody): Promise<AiProxyResult>
       }
 
       case 'synthesizeBody': {
-        const { fragments, previousGeneration } = body;
+        const { fragments, previousGeneration, customPrompt } = body;
         if (!Array.isArray(fragments)) {
           return { status: 400, error: 'synthesizeBody 需要 fragments 数组' };
         }
@@ -158,7 +160,8 @@ export async function handleAiRequest(body: AiProxyBody): Promise<AiProxyResult>
           lang,
           settings,
           2,
-          typeof previousGeneration === 'string' ? previousGeneration : undefined
+          typeof previousGeneration === 'string' ? previousGeneration : undefined,
+          { customPrompt: typeof customPrompt === 'string' ? customPrompt : undefined }
         );
         return { status: 200, data: ret };
       }

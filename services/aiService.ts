@@ -5,6 +5,7 @@
 
 import { AppSettings, AiProvider, RawFragment, WingEntry, Language, FragmentType } from '../types';
 import { GeminiService, GeminiAPIError, getSystemInstructionForSynthesis, getSystemInstructionForBodyOnly, buildInsightUserContent, safeFragmentContentForPrompt } from './geminiService';
+import { formatTimestampForPrompt } from '../utils/date';
 
 /** 统一 AI 调用错误，与 GeminiAPIError 兼容（含 code） */
 export class AiAPIError extends Error {
@@ -97,7 +98,7 @@ async function openAICompatibleSynthesize(
 
   const inputContext = fragments
     .sort((a, b) => a.timestamp - b.timestamp)
-    .map((f) => `[${new Date(f.timestamp).toLocaleTimeString()}] ${f.type === FragmentType.IMAGE ? '[Image]' : ''} ${safeFragmentContentForPrompt(f)}`)
+    .map((f) => `[${formatTimestampForPrompt(f.timestamp, lang)}] ${f.type === FragmentType.IMAGE ? '[Image]' : ''} ${safeFragmentContentForPrompt(f)}`)
     .join('\n');
 
   let fullInput = `这是用户今天的记录：\n\n${inputContext}`;
@@ -211,7 +212,7 @@ async function* openAICompatibleSynthesizeStream(
 
   const inputContext = fragments
     .sort((a, b) => a.timestamp - b.timestamp)
-    .map((f) => `[${new Date(f.timestamp).toLocaleTimeString()}] ${f.type === FragmentType.IMAGE ? '[Image]' : ''} ${safeFragmentContentForPrompt(f)}`)
+    .map((f) => `[${formatTimestampForPrompt(f.timestamp, lang)}] ${f.type === FragmentType.IMAGE ? '[Image]' : ''} ${safeFragmentContentForPrompt(f)}`)
     .join('\n');
 
   let fullInput = `这是用户今天的记录：\n\n${inputContext}`;
@@ -360,7 +361,8 @@ async function openAICompatibleSynthesizeBody(
   lang: Language,
   settings: AppSettings,
   retries: number,
-  previousGeneration?: string
+  previousGeneration?: string,
+  customPrompt?: string
 ): Promise<{ markdownContent: string }> {
   const base = getBaseUrl(settings);
   const model = getModel(settings);
@@ -370,12 +372,15 @@ async function openAICompatibleSynthesizeBody(
     '\n\nOutput ONLY a valid JSON object: {"content_markdown":"..."}. No markdown, no extra text.';
   const inputContext = fragments
     .sort((a, b) => a.timestamp - b.timestamp)
-    .map((f) => `[${new Date(f.timestamp).toLocaleTimeString()}] ${f.type === FragmentType.IMAGE ? '[Image]' : ''} ${safeFragmentContentForPrompt(f)}`)
+    .map((f) => `[${formatTimestampForPrompt(f.timestamp, lang)}] ${f.type === FragmentType.IMAGE ? '[Image]' : ''} ${safeFragmentContentForPrompt(f)}`)
     .join('\n');
   let fullInput = `这是用户今天的记录：\n\n${inputContext}`;
   if (previousGeneration?.trim()) {
     const pg = previousGeneration.length > 30000 ? previousGeneration.slice(0, 30000) + '\n\n...(正文过长已截断)' : previousGeneration;
     fullInput += `\n\n[已生成的日记正文，供重新生成时参考]\n${pg}\n\n【重新生成】content_markdown 必须为**重新撰写**的正文，禁止逐字照抄。`;
+  }
+  if (customPrompt?.trim()) {
+    fullInput += `\n\n【用户自定义要求】\n${customPrompt.trim()}`;
   }
   const isCustom = (settings.aiProvider || 'gemini') === 'custom';
   const body: Record<string, unknown> = {
@@ -570,6 +575,7 @@ export const AiService = {
   /**
    * 仅生成日记正文（三步合成第一步），可选流式；走代理时使用 action=synthesizeBody
    * @param opts.stream 是否流式（仅直连 Gemini 时有效；代理需服务端支持 handleSynthesizeBodyStream）
+   * @param customPrompt 用户自定义提示语，用于纠正细节
    */
   async synthesizeJournalBody(
     fragments: RawFragment[],
@@ -577,7 +583,7 @@ export const AiService = {
     settings: AppSettings,
     retries: number = 2,
     previousGeneration?: string,
-    opts?: { stream?: boolean }
+    opts?: { stream?: boolean; customPrompt?: string }
   ): Promise<{ markdownContent: string }> {
     if (!getEffectiveApiKey(settings)) throw new AiAPIError('请先在设置中配置 API 密钥', 'MISSING_API_KEY');
     const provider = (settings.aiProvider || 'gemini') as AiProvider;
@@ -594,7 +600,8 @@ export const AiService = {
         fragments: fragmentsForProxy,
         previousGeneration,
         writingStyle: settings.writingStyle,
-        writingStylePrompt: settings.writingStylePrompt
+        writingStylePrompt: settings.writingStylePrompt,
+        customPrompt: opts?.customPrompt
       };
       const res = await fetch(AI_PROXY_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       const data = (await res.json().catch(() => ({}))) as { markdownContent?: string; error?: string; code?: string };
@@ -611,7 +618,7 @@ export const AiService = {
       try {
         return await GeminiService.synthesizeJournalBody(
           fragments, lang, getEffectiveApiKey(settings), retries, previousGeneration,
-          getModel(settings), settings.writingStyle, settings.writingStylePrompt
+          getModel(settings), settings.writingStyle, settings.writingStylePrompt, opts?.customPrompt
         );
       } catch (e) {
         if (e instanceof GeminiAPIError) throw new AiAPIError(e.message, e.code, e.statusCode);
@@ -623,7 +630,7 @@ export const AiService = {
       if (!base) throw new AiAPIError('请填写自定义 Base URL', 'MISSING_BASE_URL');
       if (!getModel(settings)) throw new AiAPIError('请填写模型名称', 'MISSING_MODEL');
     }
-    return openAICompatibleSynthesizeBody(fragments, lang, settings, retries, previousGeneration);
+    return openAICompatibleSynthesizeBody(fragments, lang, settings, retries, previousGeneration, opts?.customPrompt);
   },
 
   /**

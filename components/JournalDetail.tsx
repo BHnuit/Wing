@@ -45,6 +45,8 @@ const JournalDetail: React.FC = () => {
   const [showRegenModal, setShowRegenModal] = useState(false);
   const [isRegenerating, setIsRegenerating] = useState(false);
   const [isRegeneratingInsight, setIsRegeneratingInsight] = useState(false);
+  /** 重新生成时的自定义提示语 */
+  const [customRegenPrompt, setCustomRegenPrompt] = useState('');
   const [isEditing, setIsEditing] = useState(false);
   const [editTitle, setEditTitle] = useState('');
   const [editMarkdown, setEditMarkdown] = useState('');
@@ -318,7 +320,7 @@ const JournalDetail: React.FC = () => {
   };
 
   /**
-   * 重新生成：合并当日所有记录（含本日记）调用 AI，按 mode 覆盖或另存为新版本
+   * 重新生成：仅重新生成正文，按 mode 覆盖或另存为新版本
    */
   const doRegenerate = async (mode: 'overwrite' | 'newVersion') => {
     if (!entry) return;
@@ -337,13 +339,16 @@ const JournalDetail: React.FC = () => {
     }
 
     setIsRegenerating(true);
+    setShowRegenModal(false);
     try {
-      const synthesized = await AiService.synthesizeJournal(
+      // 仅生成正文
+      const { markdownContent } = await AiService.synthesizeJournalBody(
         fragments,
         getModelResponseLanguage(settings),
         settings,
         2,
-        previousGeneration
+        previousGeneration,
+        { customPrompt: customRegenPrompt.trim() || undefined }
       );
 
       const images: { [key: string]: string } = {};
@@ -352,35 +357,30 @@ const JournalDetail: React.FC = () => {
       });
       const finalImages = Object.keys(images).length > 0 ? images : (fragments.length > 0 ? undefined : entry.images);
 
-      const resolvedMd = (synthesized.markdownContent != null && String(synthesized.markdownContent).trim() !== '')
-        ? synthesized.markdownContent
+      const resolvedMd = (markdownContent != null && String(markdownContent).trim() !== '')
+        ? markdownContent
         : entry.markdownContent;
-
-      const resolvedTodos = (synthesized.todos && synthesized.todos.length > 0) ? synthesized.todos : (entry.todos || []);
 
       if (mode === 'overwrite') {
         const updates = {
-          title: synthesized.title ?? entry.title,
-          summary: synthesized.summary ?? entry.summary,
-          mood: synthesized.mood ?? entry.mood,
           markdownContent: resolvedMd,
-          aiInsights: synthesized.aiInsights ?? entry.aiInsights,
-          todos: resolvedTodos,
+          editedAt: Date.now(),
           ...(finalImages !== undefined && { images: finalImages })
         };
         MockDataService.updateEntry(entry.id, updates);
         setEntry({ ...entry, ...updates });
         triggerRealtimeSyncIfEnabled(settings);
         showToast(t('regen_success'), 'success', 2000);
+        setCustomRegenPrompt('');
       } else {
         const newEntry: WingEntry = {
           id: crypto.randomUUID(),
-          title: synthesized.title ?? t('untitled'),
-          summary: synthesized.summary ?? '',
-          mood: synthesized.mood ?? '🌿',
+          title: entry.title,
+          summary: entry.summary,
+          mood: entry.mood,
           markdownContent: resolvedMd,
-          aiInsights: synthesized.aiInsights ?? '',
-          todos: resolvedTodos,
+          aiInsights: entry.aiInsights,
+          todos: entry.todos || [],
           /** 与当日聊天/会话日期一致，不采用重新生成的操作时间 */
           createdAt: entry.createdAt,
           images: Object.keys(images).length > 0 ? images : entry.images
@@ -392,6 +392,7 @@ const JournalDetail: React.FC = () => {
         }
         triggerRealtimeSyncIfEnabled(settings);
         showToast(t('regen_success'), 'success', 2000);
+        setCustomRegenPrompt('');
         navigate(`/journal/${newEntry.id}`);
       }
     } catch (err) {
@@ -619,29 +620,52 @@ const JournalDetail: React.FC = () => {
       </header>
 
       {showRegenModal && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/20" onClick={() => setShowRegenModal(false)}>
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/20" onClick={() => { setShowRegenModal(false); setCustomRegenPrompt(''); }}>
           <div
-            className="bg-twilight-cream dark:bg-nocturnal-surface rounded-2xl p-6 max-w-sm w-full mx-4 shadow-xl border border-twilight-divider dark:border-nocturnal-secondary/20"
+            className="bg-twilight-cream dark:bg-nocturnal-surface rounded-2xl p-6 max-w-md w-full mx-4 shadow-xl border border-twilight-divider dark:border-nocturnal-secondary/20 max-h-[80vh] overflow-y-auto"
             onClick={(e) => e.stopPropagation()}
           >
             <h3 className="serif text-xl font-semibold text-twilight-charcoal dark:text-nocturnal-primary mb-2">{t('regenerate_modal_title')}</h3>
             <p className="text-twilight-warm dark:text-nocturnal-secondary text-sm mb-4">{t('regenerate_modal_desc')}</p>
+            
+            {/* 自定义提示语输入卡片 */}
+            <div className="mb-4 p-4 bg-twilight-cream/60 dark:bg-nocturnal-bg/60 rounded-xl border border-twilight-divider/60 dark:border-nocturnal-secondary/20">
+              <label className="block text-sm font-medium text-twilight-charcoal dark:text-nocturnal-primary mb-2">
+                {t('regen_custom_prompt_label')}
+              </label>
+              <textarea
+                value={customRegenPrompt}
+                onChange={(e) => setCustomRegenPrompt(e.target.value)}
+                placeholder={t('regen_custom_prompt_placeholder')}
+                className="w-full min-h-[80px] px-3 py-2 text-sm text-twilight-charcoal dark:text-nocturnal-primary bg-white dark:bg-nocturnal-surface border border-twilight-divider dark:border-nocturnal-secondary/25 rounded-lg focus:outline-none focus:ring-2 focus:ring-twilight-amber/30 dark:focus:ring-nocturnal-accent/40 resize-y"
+                disabled={isRegenerating}
+              />
+              <p className="mt-1.5 text-xs text-twilight-duskLight dark:text-nocturnal-secondary">
+                {t('regen_custom_prompt_hint')}
+              </p>
+            </div>
+
             <div className="flex flex-col gap-2">
+              <div className="flex gap-2">
+                <button
+                  onClick={() => doRegenerate('overwrite')}
+                  disabled={isRegenerating}
+                  className="flex-1 py-3 px-4 bg-twilight-charcoal dark:bg-nocturnal-accent text-twilight-amberMuted dark:text-nocturnal-bg rounded-xl font-medium hover:bg-twilight-dusk dark:hover:bg-nocturnal-accent/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {t('regenerate_overwrite')}
+                </button>
+                <button
+                  onClick={() => doRegenerate('newVersion')}
+                  disabled={isRegenerating}
+                  className="flex-1 py-3 px-4 bg-twilight-cream/80 dark:bg-nocturnal-bg/80 text-twilight-charcoal dark:text-nocturnal-primary rounded-xl font-medium hover:bg-twilight-amber/15 dark:hover:bg-nocturnal-surface transition-colors border border-twilight-divider dark:border-nocturnal-secondary/25 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {t('regenerate_new_version')}
+                </button>
+              </div>
               <button
-                onClick={() => { setShowRegenModal(false); doRegenerate('overwrite'); }}
-                className="w-full py-3 px-4 bg-twilight-charcoal dark:bg-nocturnal-accent text-twilight-amberMuted dark:text-nocturnal-bg rounded-xl font-medium hover:bg-twilight-dusk dark:hover:bg-nocturnal-accent/90 transition-colors"
-              >
-                {t('regenerate_overwrite')}
-              </button>
-              <button
-                onClick={() => { setShowRegenModal(false); doRegenerate('newVersion'); }}
-                className="w-full py-3 px-4 bg-twilight-cream/80 dark:bg-nocturnal-bg/80 text-twilight-charcoal dark:text-nocturnal-primary rounded-xl font-medium hover:bg-twilight-amber/15 dark:hover:bg-nocturnal-surface transition-colors border border-twilight-divider dark:border-nocturnal-secondary/25"
-              >
-                {t('regenerate_new_version')}
-              </button>
-              <button
-                onClick={() => setShowRegenModal(false)}
-                className="w-full py-2 text-twilight-duskLight dark:text-nocturnal-secondary text-sm hover:text-twilight-warm dark:hover:text-nocturnal-primary"
+                onClick={() => { setShowRegenModal(false); setCustomRegenPrompt(''); }}
+                disabled={isRegenerating}
+                className="w-full py-2 text-twilight-duskLight dark:text-nocturnal-secondary text-sm hover:text-twilight-warm dark:hover:text-nocturnal-primary disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {t('cancel')}
               </button>

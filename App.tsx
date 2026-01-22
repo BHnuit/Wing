@@ -10,6 +10,7 @@ import SettingsAiView from './components/SettingsAiView';
 import SettingsStorageView from './components/SettingsStorageView';
 import SettingsLanguageView from './components/SettingsLanguageView';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import PwaInstallPrompt from './components/PwaInstallPrompt';
 import { MockDataService } from './services/mockDataService';
 import { useTranslation } from './i18n';
 
@@ -87,16 +88,24 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     document.documentElement.dataset.fontSize = v;
   }, [settings.fontSize]);
 
+  const containerRef = useRef<HTMLDivElement>(null);
+
   return (
     <div
-      className="min-h-screen max-w-2xl mx-auto flex flex-col bg-twilight-bg dark:bg-nocturnal-bg relative border-x border-twilight-divider dark:border-nocturnal-secondary/25 shadow-sm overflow-hidden"
+      ref={containerRef}
+      className="min-h-screen flex flex-col bg-twilight-bg dark:bg-nocturnal-bg relative border-x border-twilight-divider dark:border-nocturnal-secondary/25 shadow-sm overflow-hidden"
       data-page-font={settings.pageFont || 'system'}
-      style={{ fontFamily: getPageFontFamily(settings.pageFont) }}
+      style={{ 
+        fontFamily: getPageFontFamily(settings.pageFont),
+        width: '100%',
+        marginLeft: 'auto',
+        marginRight: 'auto'
+      }}
     >
       {/* Header：fixed 保证任意滚动容器下都固定在视口顶部；左侧 Logo+标题，右侧 Tab 图标 */}
       {!isDetail && (
         <header
-          className="fixed top-0 left-1/2 -translate-x-1/2 w-full max-w-2xl z-50 glass px-6 py-4 flex items-center justify-between cursor-pointer select-none border-b border-twilight-divider dark:border-nocturnal-secondary/25"
+          className="fixed top-0 left-0 w-full z-50 glass px-6 py-4 flex items-center justify-between cursor-pointer select-none border-b border-twilight-divider dark:border-nocturnal-secondary/25"
           onDoubleClick={scrollMainToTop}
           title="双击回到顶部"
         >
@@ -142,6 +151,9 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
       <main ref={mainRef} className={`flex-1 overflow-y-auto ${!isDetail ? 'pt-[4.125rem]' : ''}`}>
         {children}
       </main>
+      
+      {/* PWA 安装提示 */}
+      <PwaInstallPrompt />
     </div>
   );
 };

@@ -157,6 +157,27 @@ const ChatView: React.FC = () => {
     if (input.trim()) setInfinityMode(false);
   }, [input]);
 
+  /** 当输入框展开时（inputFocused 变为 true），等待布局更新后滚动到底部 */
+  useEffect(() => {
+    if (inputFocused && isScrollingToBottomForFocusRef.current) {
+      // 使用双重 requestAnimationFrame 确保布局已更新（占位区域高度已从 h-24 变为 h-52）
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          // 滚动到底部
+          scrollRef.current?.scrollIntoView({ block: 'end', behavior: 'auto' });
+          // 再等待一小段时间后再次滚动，确保真正滚动到底部（处理可能的布局延迟）
+          setTimeout(() => {
+            scrollRef.current?.scrollIntoView({ block: 'end', behavior: 'auto' });
+            // 清除标志
+            setTimeout(() => {
+              isScrollingToBottomForFocusRef.current = false;
+            }, 200);
+          }, 150);
+        });
+      });
+    }
+  }, [inputFocused]);
+
   /**
    * 点击输入框外部：始终折叠（收起高度与按钮栏，仅当 isSynthesizing 时按钮栏保留）；
    * 仅当不处于日记生成过程中时退出无限模式；生成中不退出，折叠后占位语由 placeholder 显示环节提示。
@@ -749,10 +770,14 @@ const ChatView: React.FC = () => {
       </div>
 
       {/* 占位：避免最后一条内容被固定消息栏遮挡；scrollRef 挂在此处使 scrollIntoView 能滚到真正底部 */}
-      <div ref={scrollRef} className="h-24 flex-shrink-0" aria-hidden="true" />
+      <div 
+        ref={scrollRef} 
+        className={`flex-shrink-0 transition-all duration-300 ${inputFocused ? 'h-52' : 'h-24'}`}
+        aria-hidden="true" 
+      />
 
       <div
-        className={`fixed bottom-4 left-1/2 -translate-x-1/2 w-full max-w-2xl z-40 px-4 py-3 transition-transform duration-300 ease-out ${inputBarVisible ? 'translate-y-0' : 'translate-y-full pointer-events-none'}`}
+        className={`fixed bottom-4 left-1/2 -translate-x-1/2 w-full max-w-[calc(100vw-2rem)] z-40 px-4 py-3 transition-transform duration-300 ease-out ${inputBarVisible ? 'translate-y-0' : 'translate-y-full pointer-events-none'}`}
       >
         <input
           type="file"
@@ -775,17 +800,14 @@ const ChatView: React.FC = () => {
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onFocus={() => {
-                /** 点击输入框时：先滚到底部再展开。仅用 scrollIntoView（直接改 main.scrollTop 在此布局下无效），scrollRef 在 h-24 上故能滚到真正底部 */
+                /** 点击输入框时：先滚动一次（基于当前 h-24 占位区域），然后展开状态，由 useEffect 监听 inputFocused 变化后再滚动到底部（基于新的 h-52 占位区域） */
                 // 设置标志，防止滚动过程中触发失焦
                 isScrollingToBottomForFocusRef.current = true;
+                // 先基于当前高度滚动一次
                 scrollRef.current?.scrollIntoView({ block: 'end', behavior: 'auto' });
                 setInputBarVisible(true);
                 setInputFocused(true);
                 isInputFocusedRef.current = true;
-                // 滚动完成后清除标志（behavior: 'auto' 是立即滚动，延迟一小段时间确保滚动完成）
-                setTimeout(() => {
-                  isScrollingToBottomForFocusRef.current = false;
-                }, 300);
               }}
               readOnly={isSynthesizing}
               onBlur={() => {

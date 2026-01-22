@@ -7,6 +7,13 @@
     <title>Wing - AI日记</title>
     <link rel="icon" type="image/svg+xml" href="/OwlLogo.svg" />
     <link rel="apple-touch-icon" href="/OwlLogo.svg" />
+    
+    <!-- PWA Manifest -->
+    <link rel="manifest" href="/manifest.json" />
+    <meta name="theme-color" content="#D9A54C" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="Wing" />
 
     <!-- Open Graph：全站统一分享卡片（不含动态 meta） -->
     <meta property="og:type" content="website" />
@@ -114,5 +121,32 @@
 <body>
     <div id="root"></div>
     <script type="module" src="/index.tsx"></script>
+    <script>
+        // 注册 Service Worker
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('/sw.js')
+                    .then((registration) => {
+                        console.log('[PWA] Service Worker registered:', registration.scope);
+                        
+                        // 检查更新
+                        registration.addEventListener('updatefound', () => {
+                            const newWorker = registration.installing;
+                            if (newWorker) {
+                                newWorker.addEventListener('statechange', () => {
+                                    if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                                        // 新版本可用，可以提示用户刷新
+                                        console.log('[PWA] New version available');
+                                    }
+                                });
+                            }
+                        });
+                    })
+                    .catch((error) => {
+                        console.error('[PWA] Service Worker registration failed:', error);
+                    });
+            });
+        }
+    </script>
 </body>
 </html>

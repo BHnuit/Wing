@@ -1,0 +1,26 @@
+{
+  "name": "Wing - AI日记",
+  "short_name": "Wing",
+  "description": "像黄昏的猫头鹰一样整理碎片思绪",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#FAF9F4",
+  "theme_color": "#D9A54C",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/OwlLogo.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/owl.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ],
+  "categories": ["lifestyle", "productivity"],
+  "lang": "zh-CN",
+  "dir": "ltr"
+}
