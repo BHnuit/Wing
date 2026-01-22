@@ -7,7 +7,7 @@ import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Cloud, Download, Upload, Replace, RefreshCw, CheckCircle2, XCircle, Loader2, Trash2, Eye, EyeOff } from 'lucide-react';
 import { MockDataService } from '../services/mockDataService';
 import { createWebDAVService, WebDAVService } from '../services/webdavService';
-import { downloadData, importData, replaceData, replaceDataFromSplit, importDataFromSplit } from '../services/dataService';
+import { downloadData, importData, replaceData, replaceDataFromSplit, importDataFromSplit, importDataFromFolder, replaceDataFromFolder } from '../services/dataService';
 import { getLocalDateString } from '../utils/date';
 import { useTranslation } from '../i18n';
 import { useToast } from './ErrorToast';
@@ -26,8 +26,14 @@ const SettingsStorageView: React.FC = () => {
   const [restoreLoading, setRestoreLoading] = useState(false);
   /** 是否明文显示 WebDAV 密码，默认打码 */
   const [showWebdavPass, setShowWebdavPass] = useState(false);
+  /** 显示导入方式选择弹窗 */
+  const [showImportModal, setShowImportModal] = useState(false);
+  /** 显示替换方式选择弹窗 */
+  const [showReplaceModal, setShowReplaceModal] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const replaceFileInputRef = useRef<HTMLInputElement>(null);
+  const folderInputRef = useRef<HTMLInputElement>(null);
+  const replaceFolderInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const h = () => setSettings(MockDataService.getSettings());
@@ -192,7 +198,17 @@ const SettingsStorageView: React.FC = () => {
   };
 
   const handleImport = () => {
+    setShowImportModal(true);
+  };
+
+  const handleImportFromFile = () => {
+    setShowImportModal(false);
     fileInputRef.current?.click();
+  };
+
+  const handleImportFromFolder = () => {
+    setShowImportModal(false);
+    folderInputRef.current?.click();
   };
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -205,8 +221,19 @@ const SettingsStorageView: React.FC = () => {
   };
 
   const handleReplace = () => {
+    setShowReplaceModal(true);
+  };
+
+  const handleReplaceFromFile = () => {
+    setShowReplaceModal(false);
     if (!window.confirm(t('confirm_replace'))) return;
     replaceFileInputRef.current?.click();
+  };
+
+  const handleReplaceFromFolder = () => {
+    setShowReplaceModal(false);
+    if (!window.confirm(t('confirm_replace'))) return;
+    replaceFolderInputRef.current?.click();
   };
 
   const handleReplaceFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -216,6 +243,24 @@ const SettingsStorageView: React.FC = () => {
     showToast(r.message, r.success ? 'success' : 'error');
     if (r.success) setTimeout(() => window.location.reload(), 1500);
     if (replaceFileInputRef.current) replaceFileInputRef.current.value = '';
+  };
+
+  const handleFolderSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+    const r = await importDataFromFolder(files);
+    showToast(r.message, r.success ? 'success' : 'error');
+    if (r.success) setTimeout(() => window.location.reload(), 1500);
+    if (folderInputRef.current) folderInputRef.current.value = '';
+  };
+
+  const handleReplaceFolderSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+    const r = await replaceDataFromFolder(files);
+    showToast(r.message, r.success ? 'success' : 'error');
+    if (r.success) setTimeout(() => window.location.reload(), 1500);
+    if (replaceFolderInputRef.current) replaceFolderInputRef.current.value = '';
   };
 
   const toggle = (value: boolean, onChange: (v: boolean) => void, label: string, hint: string) => (
@@ -363,6 +408,7 @@ const SettingsStorageView: React.FC = () => {
           </button>
           <p className="text-[11px] text-twilight-duskLight dark:text-nocturnal-secondary -mt-1">{t('export_format_hint')}</p>
           <input type="file" ref={fileInputRef} onChange={handleFileSelect} accept=".json,.zip" className="hidden" />
+          <input type="file" ref={folderInputRef} onChange={handleFolderSelect} webkitdirectory="" directory="" className="hidden" />
           <button
             onClick={handleImport}
             className="w-full flex items-center justify-center gap-2 bg-twilight-amber dark:bg-nocturnal-accent text-twilight-charcoal dark:text-white px-4 py-3 rounded-xl font-medium hover:bg-twilight-amberMuted dark:hover:bg-nocturnal-accent/90"
@@ -372,6 +418,7 @@ const SettingsStorageView: React.FC = () => {
           </button>
           <p className="text-[11px] text-twilight-duskLight dark:text-nocturnal-secondary -mt-1">{t('import_format_hint')}</p>
           <input type="file" ref={replaceFileInputRef} onChange={handleReplaceFileSelect} accept=".json,.zip" className="hidden" />
+          <input type="file" ref={replaceFolderInputRef} onChange={handleReplaceFolderSelect} webkitdirectory="" directory="" className="hidden" />
           <button
             onClick={handleReplace}
             className="w-full flex items-center justify-center gap-2 bg-twilight-amberMuted dark:bg-nocturnal-surface text-twilight-charcoal dark:text-nocturnal-primary px-4 py-3 rounded-xl font-medium hover:bg-twilight-amber/80 dark:hover:bg-nocturnal-secondary/30 border border-transparent dark:border-nocturnal-secondary/20"
@@ -415,6 +462,74 @@ const SettingsStorageView: React.FC = () => {
               </button>
               <button
                 onClick={() => setShowClearModal(false)}
+                className="w-full py-2 text-twilight-duskLight dark:text-nocturnal-secondary text-sm hover:text-twilight-warm dark:hover:text-nocturnal-primary"
+              >
+                {t('cancel')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showImportModal && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/20" onClick={() => setShowImportModal(false)}>
+          <div
+            className="bg-twilight-cream dark:bg-nocturnal-surface rounded-2xl p-6 max-w-sm w-full mx-4 shadow-xl border border-twilight-divider dark:border-nocturnal-secondary/20"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="serif text-xl font-semibold text-twilight-charcoal dark:text-nocturnal-primary mb-4">{t('import_select_method')}</h3>
+            <p className="text-sm text-twilight-warm dark:text-nocturnal-secondary mb-4">{t('import_select_method_hint')}</p>
+            <div className="flex flex-col gap-3">
+              <button
+                onClick={handleImportFromFile}
+                className="w-full flex items-center justify-center gap-2 bg-twilight-amber dark:bg-nocturnal-accent text-twilight-charcoal dark:text-white px-4 py-3 rounded-xl font-medium hover:bg-twilight-amberMuted dark:hover:bg-nocturnal-accent/90"
+              >
+                <Upload size={18} />
+                {t('import_from_file')}
+              </button>
+              <button
+                onClick={handleImportFromFolder}
+                className="w-full flex items-center justify-center gap-2 bg-twilight-amber/80 dark:bg-nocturnal-accent/80 text-twilight-charcoal dark:text-white px-4 py-3 rounded-xl font-medium hover:bg-twilight-amberMuted dark:hover:bg-nocturnal-accent/90"
+              >
+                <Upload size={18} />
+                {t('import_from_folder')}
+              </button>
+              <button
+                onClick={() => setShowImportModal(false)}
+                className="w-full py-2 text-twilight-duskLight dark:text-nocturnal-secondary text-sm hover:text-twilight-warm dark:hover:text-nocturnal-primary"
+              >
+                {t('cancel')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showReplaceModal && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/20" onClick={() => setShowReplaceModal(false)}>
+          <div
+            className="bg-twilight-cream dark:bg-nocturnal-surface rounded-2xl p-6 max-w-sm w-full mx-4 shadow-xl border border-twilight-divider dark:border-nocturnal-secondary/20"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="serif text-xl font-semibold text-twilight-charcoal dark:text-nocturnal-primary mb-4">{t('replace_select_method')}</h3>
+            <p className="text-sm text-twilight-warm dark:text-nocturnal-secondary mb-4">{t('replace_select_method_hint')}</p>
+            <div className="flex flex-col gap-3">
+              <button
+                onClick={handleReplaceFromFile}
+                className="w-full flex items-center justify-center gap-2 bg-twilight-amberMuted dark:bg-nocturnal-surface text-twilight-charcoal dark:text-nocturnal-primary px-4 py-3 rounded-xl font-medium hover:bg-twilight-amber/80 dark:hover:bg-nocturnal-secondary/30 border border-transparent dark:border-nocturnal-secondary/20"
+              >
+                <Replace size={18} />
+                {t('replace_from_file')}
+              </button>
+              <button
+                onClick={handleReplaceFromFolder}
+                className="w-full flex items-center justify-center gap-2 bg-twilight-amberMuted/80 dark:bg-nocturnal-surface/80 text-twilight-charcoal dark:text-nocturnal-primary px-4 py-3 rounded-xl font-medium hover:bg-twilight-amber/80 dark:hover:bg-nocturnal-secondary/30 border border-transparent dark:border-nocturnal-secondary/20"
+              >
+                <Replace size={18} />
+                {t('replace_from_folder')}
+              </button>
+              <button
+                onClick={() => setShowReplaceModal(false)}
                 className="w-full py-2 text-twilight-duskLight dark:text-nocturnal-secondary text-sm hover:text-twilight-warm dark:hover:text-nocturnal-primary"
               >
                 {t('cancel')}

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Share, MoreHorizontal, Bell, CheckCircle, RotateCw, Loader2, Pencil, History, Copy, Clipboard, Trash2, MessageSquare, Infinity, X } from 'lucide-react';
 import { getLocalDateString } from '../utils/date';
@@ -68,6 +68,10 @@ const JournalDetail: React.FC = () => {
   const todoTitleInputRef = useRef<HTMLInputElement | null>(null);
   const todosCopiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastCopyTodosAt = useRef(0);
+  /** h1 标题元素的引用，用于检测是否可见 */
+  const titleRef = useRef<HTMLHeadingElement | null>(null);
+  /** 是否在 header 中显示标题（当 h1 不可见时） */
+  const [showTitleInHeader, setShowTitleInHeader] = useState(false);
 
   useEffect(() => {
     setEntry(MockDataService.getEntryById(id || '') ?? undefined);
@@ -88,6 +92,97 @@ const JournalDetail: React.FC = () => {
       if (todosCopiedTimerRef.current) clearTimeout(todosCopiedTimerRef.current);
     };
   }, []);
+
+  /** 监听滚动，当 h1 标题不可见时在 header 中显示标题 */
+  useEffect(() => {
+    const titleElement = titleRef.current;
+    if (!titleElement) return;
+
+    const mainElement = titleElement.closest('main') as HTMLElement | null;
+    if (!mainElement) return;
+
+    let lastShouldShow: boolean | null = null;
+    
+    /** 检查标题是否被 header 遮挡（不可见） */
+    const checkTitleVisibility = () => {
+      const headerHeight = 66; // header 高度
+      
+      // 直接使用 getBoundingClientRect() 获取标题相对于视口的位置
+      const titleRect = titleElement.getBoundingClientRect();
+      
+      // 由于滚动发生在 window 上，直接检查标题相对于视口的位置
+      // 如果 titleRect.top < headerHeight，说明标题被 header 遮挡或已滚动出视口
+      // 如果 titleRect.top >= headerHeight 且 titleRect.bottom > 0，说明标题可见
+      const isTitleVisible = titleRect.top >= headerHeight && titleRect.bottom > 0;
+      const shouldShow = !isTitleVisible;
+      
+      // 只在状态变化时更新
+      if (lastShouldShow !== shouldShow) {
+        lastShouldShow = shouldShow;
+        setShowTitleInHeader(shouldShow);
+      }
+    };
+
+    // 初始检查
+    checkTitleVisibility();
+
+    /** 使用 IntersectionObserver 作为主要检测方式 */
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const entry = entries[0];
+        // 当标题不可见时，在 header 中显示标题
+        const shouldShow = !entry.isIntersecting;
+        setShowTitleInHeader(shouldShow);
+      },
+      {
+        root: mainElement,
+        rootMargin: '-66px 0px 0px 0px', // 提前 66px（header 高度）触发
+        threshold: [0, 0.01, 0.1, 0.5, 1] // 使用多个阈值确保能检测到变化
+      }
+    );
+
+    observer.observe(titleElement);
+
+    // 使用 requestAnimationFrame 持续检查，确保能检测到所有滚动
+    let rafId: number | null = null;
+    
+    const checkWithRAF = () => {
+      checkTitleVisibility();
+      rafId = requestAnimationFrame(checkWithRAF);
+    };
+    
+    rafId = requestAnimationFrame(checkWithRAF);
+
+    // 同时监听滚动事件作为备用检测
+    const handleMainScroll = () => {
+      checkTitleVisibility();
+    };
+    
+    const handleWindowScroll = () => {
+      checkTitleVisibility();
+    };
+    
+    mainElement.addEventListener('scroll', handleMainScroll, { passive: true });
+    window.addEventListener('scroll', handleWindowScroll, { passive: true });
+    
+    // 监听窗口大小变化
+    window.addEventListener('resize', checkTitleVisibility, { passive: true });
+
+    return () => {
+      observer.disconnect();
+      if (rafId !== null) {
+        cancelAnimationFrame(rafId);
+      }
+      mainElement.removeEventListener('scroll', handleMainScroll);
+      window.removeEventListener('scroll', handleWindowScroll);
+      window.removeEventListener('resize', checkTitleVisibility);
+    };
+
+    return () => {
+      observer.disconnect();
+      clearTimeout(timeoutId);
+    };
+  }, [entry]);
 
   /**
    * 从当日 session 取图片（与 ChatView 同源）；若 fragment 无 imageData 则用 entry.images 回退。
@@ -464,6 +559,11 @@ const JournalDetail: React.FC = () => {
     showToast(t('delete_success'), 'success', 2000);
   };
 
+  /** 双击 header 时，滚动到页面顶部 */
+  const scrollToTop = useCallback(() => {
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }, []);
+
   /**
    * 生成长图：将日记完整内容渲染到离屏节点，用 html2canvas 导出为 PNG 并下载
    */
@@ -509,11 +609,21 @@ const JournalDetail: React.FC = () => {
 
   return (
     <div className="bg-twilight-bg dark:bg-nocturnal-bg min-h-screen">
-      <header className="sticky top-0 z-50 glass px-4 py-3 flex items-center justify-between h-[4.125rem]">
-        <button onClick={() => navigate(-1)} className="p-2 text-twilight-duskLight dark:text-nocturnal-secondary hover:text-twilight-amber dark:hover:text-nocturnal-accent hover:bg-twilight-cream dark:hover:bg-nocturnal-surface/60 rounded-full transition-colors">
+      <header 
+        className="fixed top-0 left-0 w-full z-50 glass px-4 py-3 flex items-center justify-between h-[4.125rem] relative cursor-pointer select-none" 
+        style={{ position: 'fixed', top: 0, left: 0, right: 0, width: '100%' }}
+        onDoubleClick={scrollToTop}
+        title="双击回到顶部"
+      >
+        <button onClick={() => navigate(-1)} className="p-2 text-twilight-duskLight dark:text-nocturnal-secondary hover:text-twilight-amber dark:hover:text-nocturnal-accent hover:bg-twilight-cream dark:hover:bg-nocturnal-surface/60 rounded-full transition-colors flex-shrink-0 z-10">
           <ArrowLeft size={20} />
         </button>
-        <div className="flex items-center gap-1">
+        {showTitleInHeader && (
+          <h2 className="serif text-lg font-bold text-twilight-charcoal dark:text-nocturnal-primary truncate absolute left-1/2 -translate-x-1/2 max-w-[60%] px-3 pointer-events-none" style={{ zIndex: 1 }}>
+            {entry.title}
+          </h2>
+        )}
+        <div className="flex items-center gap-1 flex-shrink-0">
           {isEditing && (
             <>
               <button
@@ -730,7 +840,7 @@ const JournalDetail: React.FC = () => {
         </div>
       )}
 
-      <div className="px-8 pt-6 pb-12 space-y-4">
+      <div className="px-8 pt-6 pb-12 space-y-4" style={{ paddingTop: 'calc(1.5rem + 4.125rem)' }}>
         {isMoodEmoji(entry.mood) ? <span className="text-5xl block mb-2">{entry.mood}</span> : null}
         {isEditing ? (
           <input
@@ -740,7 +850,7 @@ const JournalDetail: React.FC = () => {
             className="serif w-full text-4xl font-bold text-twilight-charcoal dark:text-nocturnal-primary bg-twilight-cream/50 dark:bg-nocturnal-surface/60 border border-twilight-divider dark:border-nocturnal-secondary/25 rounded-2xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-twilight-amber/30 dark:focus:ring-nocturnal-accent/40"
           />
         ) : (
-          <h1 className="serif text-4xl font-bold text-twilight-charcoal dark:text-nocturnal-primary leading-tight">
+          <h1 ref={titleRef} className="serif text-4xl font-bold text-twilight-charcoal dark:text-nocturnal-primary leading-tight">
             {entry.title}
           </h1>
         )}

@@ -49,7 +49,11 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 
   /** 双击 header 时，将 main 滚动区域快速滚回顶部 */
   const scrollMainToTop = useCallback(() => {
-    mainRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+    // 同时滚动 main 元素和 window，确保在任何情况下都能滚动到顶部
+    if (mainRef.current) {
+      mainRef.current.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   }, []);
 
   useEffect(() => {

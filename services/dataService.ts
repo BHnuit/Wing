@@ -258,19 +258,88 @@ export const BACKUP_MAX_SPLIT_PARTS = MAX_SPLIT_PARTS;
 /**
  * 导出数据并下载为 ZIP：data.json 仅存文本，图片放入 images/ 文件夹
  * 与 buildBackupZip 结构一致，供本地下载使用
+ * 兼容移动浏览器（安卓浏览器等）的下载触发方式
  */
 export const downloadData = async (): Promise<void> => {
   const entries = MockDataService.getEntries();
   const sessions = MockDataService.getSessions();
   const blob = await buildBackupZip(entries, sessions);
   const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `wing-backup-${getLocalDateString()}.zip`;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+  const fileName = `wing-backup-${getLocalDateString()}.zip`;
+  
+  // 检测是否为移动设备
+  const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+  
+  return new Promise<void>((resolve, reject) => {
+    try {
+      // 创建下载链接
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = fileName;
+      
+      // 对于移动浏览器，设置必要的属性
+      if (isMobile) {
+        // 某些移动浏览器需要链接可见（即使很小）
+        a.style.position = 'fixed';
+        a.style.top = '-9999px';
+        a.style.left = '-9999px';
+        a.style.opacity = '0';
+        a.style.width = '1px';
+        a.style.height = '1px';
+      } else {
+        a.style.display = 'none';
+      }
+      
+      document.body.appendChild(a);
+      
+      // 使用 requestAnimationFrame 确保 DOM 更新后再触发
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          try {
+            // 创建并触发点击事件
+            const clickEvent = new MouseEvent('click', {
+              view: window,
+              bubbles: true,
+              cancelable: true,
+              buttons: 1
+            });
+            
+            // 先尝试 dispatchEvent
+            a.dispatchEvent(clickEvent);
+            
+            // 再尝试直接调用 click（某些浏览器需要）
+            if (typeof a.click === 'function') {
+              a.click();
+            }
+          } catch (e) {
+            console.warn('下载触发失败:', e);
+          }
+          
+          // 延迟清理，确保下载已开始
+          // 移动浏览器需要更长的延迟
+          const cleanupDelay = isMobile ? 2000 : 500;
+          setTimeout(() => {
+            try {
+              if (document.body.contains(a)) {
+                document.body.removeChild(a);
+              }
+            } catch (e) {
+              // 忽略清理错误
+            }
+            // 延迟释放 URL，给浏览器足够时间处理下载
+            setTimeout(() => {
+              URL.revokeObjectURL(url);
+            }, 500);
+            resolve();
+          }, cleanupDelay);
+        });
+      });
+      
+    } catch (error) {
+      URL.revokeObjectURL(url);
+      reject(new Error(`无法触发下载: ${error instanceof Error ? error.message : '未知错误'}`));
+    }
+  });
 };
 
 /**
@@ -461,6 +530,63 @@ export async function importDataFromSplit(jsonContent: string, imageZipBlobs: Bl
 }
 
 /**
+ * 从文件夹导入数据：支持 WebDAV 导出的文件夹格式
+ * 自动检测单文件备份（wing-backup-*.zip）或分卷备份（wing-backup-*.json + wing-backup-*_images_*.zip）
+ * 合并到现有数据，不覆盖已有条目/会话
+ */
+export const importDataFromFolder = async (files: FileList): Promise<{ success: boolean; message: string }> => {
+  try {
+    // 将 FileList 转换为数组
+    const fileArray = Array.from(files);
+    
+    // 查找单文件备份
+    const singleZipFile = fileArray.find(f => /^wing-backup-\d{4}-\d{2}-\d{2}\.zip$/i.test(f.name));
+    if (singleZipFile) {
+      return await importData(singleZipFile);
+    }
+    
+    // 查找分卷备份：查找 JSON 文件
+    const jsonFile = fileArray.find(f => /^wing-backup-\d{4}-\d{2}-\d{2}\.json$/i.test(f.name));
+    if (jsonFile) {
+      // 提取日期部分
+      const dateMatch = jsonFile.name.match(/^wing-backup-(\d{4}-\d{2}-\d{2})\.json$/i);
+      if (!dateMatch) {
+        return { success: false, message: '无法识别备份文件格式' };
+      }
+      const dateStr = dateMatch[1];
+      
+      // 查找对应的图片 ZIP 文件
+      const imageZipFiles = fileArray
+        .filter(f => {
+          const match = f.name.match(new RegExp(`^wing-backup-${dateStr.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}_images_(\\d+)\\.zip$`, 'i'));
+          return match !== null;
+        })
+        .sort((a, b) => {
+          const aNum = parseInt(a.name.match(/_images_(\d+)/)?.[1] ?? '0', 10);
+          const bNum = parseInt(b.name.match(/_images_(\d+)/)?.[1] ?? '0', 10);
+          return aNum - bNum;
+        });
+      
+      if (imageZipFiles.length === 0) {
+        return { success: false, message: '未找到对应的图片备份文件' };
+      }
+      
+      // 读取 JSON 内容
+      const jsonContent = await jsonFile.text();
+      
+      // 将图片 ZIP 文件转换为 Blob
+      const imageZipBlobs: Blob[] = imageZipFiles.map(f => f);
+      
+      return await importDataFromSplit(jsonContent, imageZipBlobs);
+    }
+    
+    return { success: false, message: '文件夹中未找到有效的备份文件（需要 wing-backup-*.zip 或 wing-backup-*.json + wing-backup-*_images_*.zip）' };
+  } catch (e) {
+    return { success: false, message: `导入失败: ${e instanceof Error ? e.message : '未知错误'}` };
+  }
+};
+
+/**
  * 导入数据：支持 .json（旧版，base64 内联）与 .zip（data.json + images/ 文件夹）
  * 合并到现有数据，不覆盖已有条目/会话
  */
@@ -551,6 +677,63 @@ async function applyImportMerge(data: ExportData): Promise<{ success: boolean; m
   window.dispatchEvent(new Event('wing_data_updated'));
   return { success: true, message: `成功导入 ${data.entries.length} 条日记和 ${data.sessions.length} 个会话` };
 }
+
+/**
+ * 从文件夹替换数据：支持 WebDAV 导出的文件夹格式
+ * 自动检测单文件备份（wing-backup-*.zip）或分卷备份（wing-backup-*.json + wing-backup-*_images_*.zip）
+ * 完全替换现有数据（危险操作）
+ */
+export const replaceDataFromFolder = async (files: FileList): Promise<{ success: boolean; message: string }> => {
+  try {
+    // 将 FileList 转换为数组
+    const fileArray = Array.from(files);
+    
+    // 查找单文件备份
+    const singleZipFile = fileArray.find(f => /^wing-backup-\d{4}-\d{2}-\d{2}\.zip$/i.test(f.name));
+    if (singleZipFile) {
+      return await replaceData(singleZipFile);
+    }
+    
+    // 查找分卷备份：查找 JSON 文件
+    const jsonFile = fileArray.find(f => /^wing-backup-\d{4}-\d{2}-\d{2}\.json$/i.test(f.name));
+    if (jsonFile) {
+      // 提取日期部分
+      const dateMatch = jsonFile.name.match(/^wing-backup-(\d{4}-\d{2}-\d{2})\.json$/i);
+      if (!dateMatch) {
+        return { success: false, message: '无法识别备份文件格式' };
+      }
+      const dateStr = dateMatch[1];
+      
+      // 查找对应的图片 ZIP 文件
+      const imageZipFiles = fileArray
+        .filter(f => {
+          const match = f.name.match(new RegExp(`^wing-backup-${dateStr.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}_images_(\\d+)\\.zip$`, 'i'));
+          return match !== null;
+        })
+        .sort((a, b) => {
+          const aNum = parseInt(a.name.match(/_images_(\d+)/)?.[1] ?? '0', 10);
+          const bNum = parseInt(b.name.match(/_images_(\d+)/)?.[1] ?? '0', 10);
+          return aNum - bNum;
+        });
+      
+      if (imageZipFiles.length === 0) {
+        return { success: false, message: '未找到对应的图片备份文件' };
+      }
+      
+      // 读取 JSON 内容
+      const jsonContent = await jsonFile.text();
+      
+      // 将图片 ZIP 文件转换为 Blob
+      const imageZipBlobs: Blob[] = imageZipFiles.map(f => f);
+      
+      return await replaceDataFromSplit(jsonContent, imageZipBlobs);
+    }
+    
+    return { success: false, message: '文件夹中未找到有效的备份文件（需要 wing-backup-*.zip 或 wing-backup-*.json + wing-backup-*_images_*.zip）' };
+  } catch (e) {
+    return { success: false, message: `替换失败: ${e instanceof Error ? e.message : '未知错误'}` };
+  }
+};
 
 /**
  * 完全替换数据：支持 .json 与 .zip（危险操作）
