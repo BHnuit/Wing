@@ -112,6 +112,10 @@ const ChatView: React.FC = () => {
   const placeholderMeasureRef = useRef<HTMLDivElement>(null);
   /** 切换日期时置为 true，避免 fragments 效果里 scrollIntoView 滚到底部 */
   const isDateSwitchRef = useRef(false);
+  /** 跟踪输入框是否聚焦，用于滚动时失焦判断 */
+  const isInputFocusedRef = useRef(false);
+  /** 标记是否正在因为聚焦而滚动到底部，在此期间不触发失焦 */
+  const isScrollingToBottomForFocusRef = useRef(false);
   /** 上一 viewDate，用于区分「切换日期」与「同一天新增片段」 */
   const prevViewDateRef = useRef<string | undefined>(undefined);
   /** 折叠时占位语若超过一行，根据测量结果扩展行数（1–4） */
@@ -120,6 +124,8 @@ const ChatView: React.FC = () => {
   const [inputBarVisible, setInputBarVisible] = useState(true);
   const lastMainScrollTopRef = useRef(-1);
   const { showToast, ToastContainer } = useToast();
+  /** 标记是否从其他页面返回（用于显示不同的空白状态提示语） */
+  const [isReturningFromOtherPage, setIsReturningFromOtherPage] = useState(false);
 
   /** 随 viewDate 拉取 session；切换日期时滚动到 main 顶部并标记，避免后续 fragments 效果滚到底部 */
   useEffect(() => {
@@ -131,6 +137,20 @@ const ChatView: React.FC = () => {
     }
     prevViewDateRef.current = viewDate;
   }, [viewDate]);
+
+  /** 判断是否从其他页面返回：通过检查 sessionStorage 中是否有访问过其他页面的标记
+   * - 打开/刷新页面：sessionStorage 中没有标记，显示"新的一天开始了..."
+   * - 从其他页面返回：sessionStorage 中有标记，显示"如果暂时没有其他想法..."
+   */
+  useEffect(() => {
+    if (viewDate === today && (!session || session.fragments.length === 0)) {
+      // 检查是否访问过其他页面（日记页或设置页）
+      const hasVisitedOtherPage = sessionStorage.getItem('wing_visited_other_page') === 'true';
+      setIsReturningFromOtherPage(hasVisitedOtherPage);
+    } else {
+      setIsReturningFromOtherPage(false);
+    }
+  }, [viewDate, today, session]);
 
   /** 有输入时退出收拢模式，按钮变回发送按钮 */
   useEffect(() => {
@@ -187,6 +207,7 @@ const ChatView: React.FC = () => {
   /**
    * 监听整个页面的 touchmove / wheel，用 requestAnimationFrame 取「当前滚动位置」后做输入栏显隐：
    * 向下滑隐藏，向上或到顶/到底显示。优先读 main，没有则读 window/document。
+   * 当页面滚动时，如果输入框处于聚焦状态，自动失焦。
    */
   const INPUT_BAR_SCROLL_THRESHOLD = 5;
   const INPUT_BAR_BOTTOM_MARGIN = 10;
@@ -204,6 +225,14 @@ const ChatView: React.FC = () => {
           lastMainScrollTopRef.current = scrollTop;
           return;
         }
+        
+        // 检测到滚动时，如果输入框聚焦则失焦（向上和向下滚动都触发）
+        // 但如果正在因为聚焦而滚动到底部，则不触发失焦
+        const delta = scrollTop - last;
+        if (Math.abs(delta) > INPUT_BAR_SCROLL_THRESHOLD && isInputFocusedRef.current && !isScrollingToBottomForFocusRef.current) {
+          textareaRef.current?.blur();
+        }
+        
         if (scrollTop <= 0) {
           setInputBarVisible(true);
           lastMainScrollTopRef.current = scrollTop;
@@ -215,7 +244,6 @@ const ChatView: React.FC = () => {
           lastMainScrollTopRef.current = scrollTop;
           return;
         }
-        const delta = scrollTop - last;
         lastMainScrollTopRef.current = scrollTop;
         if (delta > INPUT_BAR_SCROLL_THRESHOLD) setInputBarVisible(false);
         else if (delta < -INPUT_BAR_SCROLL_THRESHOLD) setInputBarVisible(true);
@@ -538,7 +566,7 @@ const ChatView: React.FC = () => {
         >
           <ChevronLeft size={20} />
         </button>
-        <span className="min-w-[7rem] text-center text-sm font-medium text-twilight-warm dark:text-nocturnal-accent">
+        <span className="min-w-[7rem] text-center text-xs font-medium text-twilight-warm dark:text-nocturnal-accent">
           {dateLabel}
         </span>
         <button
@@ -556,25 +584,36 @@ const ChatView: React.FC = () => {
         {fragments.length === 0 ? (
           <div className="min-h-[calc(100vh-12rem)] flex flex-col items-center justify-center text-twilight-duskLight dark:text-nocturnal-secondary space-y-4">
             <EmptyStateOwl size={100} />
-            <div className="flex flex-wrap justify-center gap-2 max-w-md px-4">
-              {promptGuides.map((q) => (
-                <button
-                  key={q}
-                  type="button"
-                  onClick={() => {
-                    setInput(q);
-                    setInputFocused(true);
-                    textareaRef.current?.focus();
-                  }}
-                  className="px-3 py-1.5 text-sm text-twilight-charcoal dark:text-nocturnal-primary bg-twilight-cream/60 dark:bg-nocturnal-surface/60 border border-twilight-divider/80 dark:border-nocturnal-secondary/30 rounded-full hover:bg-twilight-amber/10 dark:hover:bg-nocturnal-accent/10 hover:border-twilight-amber/50 dark:hover:border-nocturnal-accent/40 transition-colors cursor-pointer"
-                >
-                  {q}
-                </button>
-              ))}
-            </div>
-            <p className="text-xs text-twilight-duskLight/80 dark:text-nocturnal-secondary/80">
-              {t('prompt_guide_hint')}
-            </p>
+            {/* 根据是否从其他页面返回显示不同的提示语和内容 */}
+            {viewDate === today && (
+              <p className="text-sm text-twilight-charcoal dark:text-nocturnal-primary text-center px-4">
+                {isReturningFromOtherPage ? t('empty_state_return_visit') : t('empty_state_first_visit')}
+              </p>
+            )}
+            {/* 只有从其他页面返回时才显示问题列表 */}
+            {isReturningFromOtherPage && (
+              <>
+                <div className="flex flex-wrap justify-center gap-2 max-w-md px-4">
+                  {promptGuides.map((q) => (
+                    <button
+                      key={q}
+                      type="button"
+                      onClick={() => {
+                        setInput(q);
+                        setInputFocused(true);
+                        textareaRef.current?.focus();
+                      }}
+                      className="px-3 py-1.5 text-sm text-twilight-charcoal dark:text-nocturnal-primary bg-twilight-cream/60 dark:bg-nocturnal-surface/60 border border-twilight-divider/80 dark:border-nocturnal-secondary/30 rounded-full hover:bg-twilight-amber/10 dark:hover:bg-nocturnal-accent/10 hover:border-twilight-amber/50 dark:hover:border-nocturnal-accent/40 transition-colors cursor-pointer"
+                    >
+                      {q}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-xs text-twilight-duskLight/80 dark:text-nocturnal-secondary/80">
+                  {t('prompt_guide_hint')}
+                </p>
+              </>
+            )}
           </div>
         ) : (
           unifiedTimeline.map((ev, i) => {
@@ -611,7 +650,7 @@ const ChatView: React.FC = () => {
                               value={editDraft}
                               onChange={(e) => setEditDraft(e.target.value)}
                               placeholder={t('image_placeholder')}
-                              className="w-full text-[0.6875rem] text-twilight-warm dark:text-nocturnal-secondary bg-transparent border-none resize-none focus:outline-none focus:ring-0 min-h-[1.75rem] leading-snug"
+                              className="w-full text-sm text-twilight-warm dark:text-nocturnal-secondary bg-transparent border-none resize-none focus:outline-none focus:ring-0 min-h-[1.75rem] leading-snug"
                               rows={2}
                               autoFocus
                             />
@@ -619,7 +658,7 @@ const ChatView: React.FC = () => {
                         ) : (
                           (fragment.content && fragment.content !== t('image_placeholder')) && (
                             <div className="px-3 py-1.5 bg-twilight-cream/30 dark:bg-nocturnal-bg/40 border-t border-twilight-divider dark:border-nocturnal-secondary/20">
-                              <p className="text-[0.6875rem] leading-snug text-twilight-duskLight dark:text-nocturnal-secondary">{fragment.content}</p>
+                              <p className="text-sm leading-snug text-twilight-duskLight dark:text-nocturnal-secondary">{fragment.content}</p>
                             </div>
                           )
                         )}
@@ -630,14 +669,14 @@ const ChatView: React.FC = () => {
                           value={editDraft}
                           onChange={(e) => setEditDraft(e.target.value)}
                           placeholder={t('mind_placeholder')}
-                          className="w-full text-[0.8125rem] text-twilight-charcoal dark:text-nocturnal-primary leading-snug bg-transparent border-none resize-none focus:outline-none focus:ring-0 min-h-[3.5rem]"
+                          className="w-full text-sm text-twilight-charcoal dark:text-nocturnal-primary leading-snug bg-transparent border-none resize-none focus:outline-none focus:ring-0 min-h-[3.5rem]"
                           rows={4}
                           autoFocus
                         />
                       </div>
                     ) : (
                       <div className="px-3 py-2">
-                        <p className="text-[0.8125rem] text-twilight-charcoal dark:text-nocturnal-primary leading-snug">{fragment.content}</p>
+                        <p className="text-sm text-twilight-charcoal dark:text-nocturnal-primary leading-snug">{fragment.content}</p>
                       </div>
                     )}
                   </div>
@@ -690,7 +729,7 @@ const ChatView: React.FC = () => {
                     <OwlLogo size={20} className="dark:invert" />
                   </div>
                   <div className="bg-twilight-cream dark:bg-nocturnal-surface border border-twilight-divider dark:border-nocturnal-secondary/25 rounded-2xl rounded-tl-none px-3 py-2 shadow-sm">
-                    <p className="text-[0.8125rem] leading-snug text-twilight-charcoal dark:text-nocturnal-primary">
+                    <p className="text-sm leading-snug text-twilight-charcoal dark:text-nocturnal-primary">
                       {msg}
                       《<Link to={`/journal/${ev.entryId}`} className="text-twilight-amber dark:text-nocturnal-accent font-medium hover:underline">{ev.title}</Link>》
                     </p>
@@ -737,9 +776,16 @@ const ChatView: React.FC = () => {
               onChange={(e) => setInput(e.target.value)}
               onFocus={() => {
                 /** 点击输入框时：先滚到底部再展开。仅用 scrollIntoView（直接改 main.scrollTop 在此布局下无效），scrollRef 在 h-24 上故能滚到真正底部 */
+                // 设置标志，防止滚动过程中触发失焦
+                isScrollingToBottomForFocusRef.current = true;
                 scrollRef.current?.scrollIntoView({ block: 'end', behavior: 'auto' });
                 setInputBarVisible(true);
                 setInputFocused(true);
+                isInputFocusedRef.current = true;
+                // 滚动完成后清除标志（behavior: 'auto' 是立即滚动，延迟一小段时间确保滚动完成）
+                setTimeout(() => {
+                  isScrollingToBottomForFocusRef.current = false;
+                }, 300);
               }}
               readOnly={isSynthesizing}
               onBlur={() => {
@@ -749,15 +795,18 @@ const ChatView: React.FC = () => {
                   const el = document.activeElement;
                   if (container && el != null && container.contains(el)) return;
                   setInputFocused(false);
+                  isInputFocusedRef.current = false;
                 });
               }}
-              /** 回车与换行仅插入换行，不自动发送；须手动点击发送键才发送。生成中：展开时占位「猫头鹰正在收拢羽毛，请稍等」；折叠时占位为原小字提示语（synthStatus/weaving） */
+              /** 回车与换行仅插入换行，不自动发送；须手动点击发送键才发送。聚焦时占位语消失；未聚焦时：生成中显示 synthStatus/weaving，否则显示 inputPlaceholderQuestion 或 mind_placeholder */
               placeholder={
-                isSynthesizing
-                  ? (inputFocused ? t('owl_gathering_please_wait') : (synthStatus || t('weaving')))
-                  : (fragments.length > 0 ? inputPlaceholderQuestion : t('mind_placeholder'))
+                inputFocused
+                  ? ''
+                  : (isSynthesizing
+                      ? (synthStatus || t('weaving'))
+                      : (fragments.length > 0 ? inputPlaceholderQuestion : t('mind_placeholder')))
               }
-              className="w-full bg-transparent border-none resize-none outline-none focus:ring-0 text-twilight-charcoal dark:text-nocturnal-primary px-4 pt-3 pb-2 pr-11 max-h-40 placeholder:text-twilight-duskLight placeholder:dark:text-nocturnal-secondary"
+              className="w-full bg-transparent border-none resize-none outline-none focus:ring-0 text-sm text-twilight-charcoal dark:text-nocturnal-primary px-4 pt-3 pb-2 pr-11 max-h-40 placeholder:text-twilight-duskLight placeholder:dark:text-nocturnal-secondary"
             />
             <div className={`absolute top-3 right-3 transition-all duration-300 ${showSuccess ? 'scale-110 opacity-100' : 'scale-50 opacity-0'}`} aria-hidden="true">
               <CheckCircle2 className="text-green-500" size={20} />

@@ -34,6 +34,18 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const t = useTranslation(settings.language);
   const isDetail = location.pathname.includes('/journal/');
 
+  /** 在应用初始化时检测是否是页面刷新，如果是刷新则清空访问标记 */
+  useEffect(() => {
+    // 检测页面加载类型
+    const navigation = performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming | undefined;
+    const loadType = navigation?.type;
+    
+    // 刷新页面或首次加载时清空标记
+    if (loadType === 'reload' || loadType === 'navigate') {
+      sessionStorage.removeItem('wing_visited_other_page');
+    }
+  }, []);
+
   /** 双击 header 时，将 main 滚动区域快速滚回顶部 */
   const scrollMainToTop = useCallback(() => {
     mainRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
@@ -102,6 +114,10 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
             </NavLink>
             <NavLink
               to="/journal"
+              onClick={() => {
+                // 记录用户点击过日记页
+                sessionStorage.setItem('wing_visited_other_page', 'true');
+              }}
               className={({ isActive }) => `p-1.5 rounded-lg transition-colors ${isActive ? 'text-twilight-amber dark:text-nocturnal-accent' : 'text-twilight-duskLight dark:text-nocturnal-secondary hover:text-twilight-amber dark:hover:text-nocturnal-accent'}`}
               title={t('journals')}
             >
@@ -110,6 +126,10 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
             <NavLink
               to="/settings"
               end={false}
+              onClick={() => {
+                // 记录用户点击过设置页
+                sessionStorage.setItem('wing_visited_other_page', 'true');
+              }}
               className={({ isActive }) => `p-1.5 rounded-lg transition-colors ${isActive ? 'text-twilight-amber dark:text-nocturnal-accent' : 'text-twilight-duskLight dark:text-nocturnal-secondary hover:text-twilight-amber dark:hover:text-nocturnal-accent'}`}
               title={t('settings')}
             >
