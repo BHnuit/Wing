@@ -11,6 +11,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Maximize2, X, ChevronLeft, ChevronRight, ZoomIn } from 'lucide-react';
 import { WingEntry } from '../types';
+import { debounce } from '../utils/performance';
 
 interface MarkdownRendererProps {
   content: string;
@@ -494,15 +495,16 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content, ent
     const portraitContainerRef = useRef<HTMLDivElement>(null);
     const landscapeContainerRef = useRef<HTMLDivElement>(null);
 
-    // 检测移动模式（窗口宽度 < 768px）
+    // 检测移动模式（窗口宽度 < 768px），使用防抖优化性能
     useEffect(() => {
       const checkMobile = () => {
         setIsMobile(window.innerWidth < 768);
       };
       
       checkMobile();
-      window.addEventListener('resize', checkMobile);
-      return () => window.removeEventListener('resize', checkMobile);
+      const debouncedCheckMobile = debounce(checkMobile, 150);
+      window.addEventListener('resize', debouncedCheckMobile);
+      return () => window.removeEventListener('resize', debouncedCheckMobile);
     }, []);
 
     // 检测图片尺寸并决定布局

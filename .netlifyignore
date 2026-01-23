@@ -10,4 +10,9 @@ dist/
 .idea/
 capacitor.config.ts
 setup-ios.sh
-setup-ios.md
+docs/setup-ios.md
+docs/development-roadmap.md
+docs/changelog.md
+docs/webdav-sync-solutions.md
+docs/guide.md
+docs/README.md

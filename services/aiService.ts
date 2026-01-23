@@ -380,7 +380,12 @@ async function openAICompatibleSynthesizeBody(
     fullInput += `\n\n[已生成的日记正文，供重新生成时参考]\n${pg}\n\n【重新生成】content_markdown 必须为**重新撰写**的正文，禁止逐字照抄。`;
   }
   if (customPrompt?.trim()) {
-    fullInput += `\n\n【用户自定义要求】\n${customPrompt.trim()}`;
+    // 如果 customPrompt 包含记忆上下文（以【开头），直接追加；否则作为用户自定义要求
+    if (customPrompt.includes('【')) {
+      fullInput += `\n\n${customPrompt.trim()}`;
+    } else {
+      fullInput += `\n\n【用户自定义要求】\n${customPrompt.trim()}`;
+    }
   }
   const isCustom = (settings.aiProvider || 'gemini') === 'custom';
   const body: Record<string, unknown> = {

@@ -6,18 +6,18 @@
  */
 
 import JSZip from 'jszip';
-import { WingEntry, DailySession, RawFragment, AiProvider, FragmentType, AppSettings } from '../types';
+import { WingEntry, DailySession, RawFragment, AiProvider, FragmentType, AppSettings, Memory } from '../types';
 import { getLocalDateString } from '../utils/date';
 import { isQuotaExceededError } from '../utils/storage';
 import { MockDataService } from './mockDataService';
+import { IndexedDBStorage } from './indexedDBStorage';
 
-/** 「备份所有设置」时导出的设置选项与开关（不含 apiKeys、webdav、aiModels、aiBaseUrl） */
+/** 「备份所有设置」时导出的设置选项与开关（不含 apiKeys、webdav、aiModels、aiBaseUrl、theme、fontSize） */
 export type ExportSettings = Partial<
   Pick<
     AppSettings,
     | 'aiProvider'
     | 'language'
-    | 'theme'
     | 'pageFont'
     | 'modelLanguage'
     | 'keepEditHistory'
@@ -26,6 +26,9 @@ export type ExportSettings = Partial<
     | 'writingStyle'
     | 'writingStylePrompt'
     | 'insightPrompt'
+    | 'enableLongTermMemory'
+    | 'memoryExtractionAuto'
+    | 'memoryRetrievalEnabled'
   >
 >;
 
@@ -34,6 +37,8 @@ export interface ExportData {
   sessions: DailySession[];
   version: string;
   timestamp: number;
+  /** 长期记忆数据（仅当「备份所有设置」开启时包含） */
+  memories?: Memory[];
   /** 各供应商的 API Key（仅当「备份所有设置」开启时包含） */
   apiKeys?: Partial<Record<AiProvider, string>>;
   /** 云端备份 WebDAV 设置（仅当「备份所有设置」开启时包含） */
@@ -87,7 +92,6 @@ function getExportSettings(s: AppSettings): ExportSettings | undefined {
   const o: ExportSettings = {};
   if (s.aiProvider !== undefined) o.aiProvider = s.aiProvider;
   if (s.language !== undefined) o.language = s.language;
-  if (s.theme !== undefined) o.theme = s.theme;
   if (s.pageFont !== undefined) o.pageFont = s.pageFont;
   if (s.modelLanguage !== undefined) o.modelLanguage = s.modelLanguage;
   if (s.keepEditHistory !== undefined) o.keepEditHistory = s.keepEditHistory;
@@ -96,6 +100,9 @@ function getExportSettings(s: AppSettings): ExportSettings | undefined {
   if (s.writingStyle !== undefined) o.writingStyle = s.writingStyle;
   if (s.writingStylePrompt !== undefined) o.writingStylePrompt = s.writingStylePrompt;
   if (s.insightPrompt !== undefined) o.insightPrompt = s.insightPrompt;
+  if (s.enableLongTermMemory !== undefined) o.enableLongTermMemory = s.enableLongTermMemory;
+  if (s.memoryExtractionAuto !== undefined) o.memoryExtractionAuto = s.memoryExtractionAuto;
+  if (s.memoryRetrievalEnabled !== undefined) o.memoryRetrievalEnabled = s.memoryRetrievalEnabled;
   return Object.keys(o).length > 0 ? o : undefined;
 }
 
@@ -126,6 +133,11 @@ export const exportData = (): string => {
     out.aiBaseUrl = settings.aiBaseUrl ?? '';
     const s = getExportSettings(settings);
     if (s) out.settings = s;
+    // 导出长期记忆数据
+    const memories = IndexedDBStorage.getMemories();
+    if (memories.length > 0) {
+      out.memories = memories;
+    }
   }
 
   return JSON.stringify(out, null, 2);
@@ -184,6 +196,11 @@ function prepareBackupData(entries: WingEntry[], sessions: DailySession[]): { da
     dataObj.aiBaseUrl = settings.aiBaseUrl ?? '';
     const s = getExportSettings(settings);
     if (s) dataObj.settings = s;
+    // 导出长期记忆数据
+    const memories = IndexedDBStorage.getMemories();
+    if (memories.length > 0) {
+      dataObj.memories = memories;
+    }
   }
   return { dataJson: JSON.stringify(dataObj, null, 2), imageList };
 }
@@ -354,6 +371,7 @@ async function resolveDataFromZip(zip: JSZip): Promise<{ data: ExportData | null
   const parsed = JSON.parse(text) as {
     entries?: unknown[];
     sessions?: unknown[];
+    memories?: Memory[];
     apiKeys?: Partial<Record<AiProvider, string>>;
     webdav?: { webdavUrl: string; webdavUser: string; webdavPass: string };
     aiModels?: Partial<Record<AiProvider, string>>;
@@ -404,6 +422,7 @@ async function resolveDataFromZip(zip: JSZip): Promise<{ data: ExportData | null
     sessions,
     version: (parsed as { version?: string }).version || '1.0.0',
     timestamp: (parsed as { timestamp?: number }).timestamp || Date.now(),
+    memories: (parsed as { memories?: Memory[] }).memories,
     apiKeys: parsed.apiKeys,
     webdav: parsed.webdav,
     aiModels: parsed.aiModels,
@@ -429,6 +448,7 @@ function resolveDataFromImageMap(
     sessions?: unknown[];
     version?: string;
     timestamp?: number;
+    memories?: Memory[];
     apiKeys?: unknown;
     webdav?: unknown;
     aiModels?: unknown;
@@ -473,6 +493,7 @@ function resolveDataFromImageMap(
     sessions,
     version: parsed.version || '1.0.0',
     timestamp: parsed.timestamp || Date.now(),
+    memories: parsed.memories,
     apiKeys: parsed.apiKeys,
     webdav: parsed.webdav,
     aiModels: parsed.aiModels,
@@ -674,6 +695,17 @@ async function applyImportMerge(data: ExportData): Promise<{ success: boolean; m
   if (data.aiBaseUrl !== undefined) {
     MockDataService.updateSettings({ aiBaseUrl: data.aiBaseUrl ?? '' });
   }
+  // 导入长期记忆数据（合并模式：按 id 去重）
+  if (data.memories != null && Array.isArray(data.memories) && data.memories.length > 0) {
+    const existingMemories = IndexedDBStorage.getMemories();
+    const memoryMap = new Map(existingMemories.map((m) => [m.id, m]));
+    data.memories.forEach((memory) => {
+      if (!memoryMap.has(memory.id)) {
+        memoryMap.set(memory.id, memory);
+      }
+    });
+    await IndexedDBStorage.replaceMemories(Array.from(memoryMap.values()));
+  }
   window.dispatchEvent(new Event('wing_data_updated'));
   return { success: true, message: `成功导入 ${data.entries.length} 条日记和 ${data.sessions.length} 个会话` };
 }
@@ -809,6 +841,13 @@ async function applyReplace(data: ExportData): Promise<{ success: boolean; messa
   }
   if (data.aiBaseUrl !== undefined) {
     MockDataService.updateSettings({ aiBaseUrl: data.aiBaseUrl ?? '' });
+  }
+  // 替换长期记忆数据（完全替换模式）
+  if (data.memories != null && Array.isArray(data.memories)) {
+    await IndexedDBStorage.replaceMemories(data.memories);
+  } else {
+    // 如果没有记忆数据，清空现有记忆（替换模式）
+    await IndexedDBStorage.replaceMemories([]);
   }
   window.dispatchEvent(new Event('wing_data_updated'));
   return { success: true, message: `成功替换数据: ${data.entries.length} 条日记和 ${data.sessions.length} 个会话` };

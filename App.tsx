@@ -1,18 +1,23 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, Suspense, lazy } from 'react';
 import { HashRouter, Routes, Route, NavLink, useLocation } from 'react-router-dom';
 import { MessageSquare, BookOpen, Settings as SettingsIcon } from 'lucide-react';
 import { OwlLogo } from './components/OwlAssets';
-import ChatView from './components/ChatView';
-import JournalView from './components/JournalView';
-import JournalDetail from './components/JournalDetail';
-import SettingsMainView from './components/SettingsMainView';
-import SettingsAiView from './components/SettingsAiView';
-import SettingsStorageView from './components/SettingsStorageView';
-import SettingsLanguageView from './components/SettingsLanguageView';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import PwaInstallPrompt from './components/PwaInstallPrompt';
+import { LoadingFallback } from './components/LoadingFallback';
 import { MockDataService } from './services/mockDataService';
 import { useTranslation } from './i18n';
+
+// 路由懒加载组件
+const ChatView = lazy(() => import('./components/ChatView'));
+const JournalView = lazy(() => import('./components/JournalView'));
+const JournalDetail = lazy(() => import('./components/JournalDetail'));
+const SettingsMainView = lazy(() => import('./components/SettingsMainView'));
+const SettingsAiView = lazy(() => import('./components/SettingsAiView'));
+const SettingsStorageView = lazy(() => import('./components/SettingsStorageView'));
+const SettingsLanguageView = lazy(() => import('./components/SettingsLanguageView'));
+const MemoryManagementView = lazy(() => import('./components/MemoryManagementView'));
+const ChangelogView = lazy(() => import('./components/ChangelogView'));
 
 /** 根据页面字体设置返回对应的 font-family 值（正文与标题） */
 function getPageFontFamily(pageFont?: string): string {
@@ -33,7 +38,7 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const mainRef = useRef<HTMLElement>(null);
   const [settings, setSettings] = useState(MockDataService.getSettings());
   const t = useTranslation(settings.language);
-  const isDetail = location.pathname.includes('/journal/');
+  const isDetail = location.pathname.includes('/journal/') || location.pathname.includes('/changelog');
 
   /** 在应用初始化时检测是否是页面刷新，如果是刷新则清空访问标记 */
   useEffect(() => {
@@ -167,15 +172,19 @@ const App: React.FC = () => {
     <ErrorBoundary>
       <HashRouter>
         <Layout>
-          <Routes>
-            <Route path="/" element={<ChatView />} />
-            <Route path="/journal" element={<JournalView />} />
-            <Route path="/journal/:id" element={<JournalDetail />} />
-            <Route path="/settings" element={<SettingsMainView />} />
-            <Route path="/settings/language" element={<SettingsLanguageView />} />
-            <Route path="/settings/ai" element={<SettingsAiView />} />
-            <Route path="/settings/storage" element={<SettingsStorageView />} />
-          </Routes>
+          <Suspense fallback={<LoadingFallback />}>
+            <Routes>
+              <Route path="/" element={<ChatView />} />
+              <Route path="/journal" element={<JournalView />} />
+              <Route path="/journal/:id" element={<JournalDetail />} />
+              <Route path="/settings" element={<SettingsMainView />} />
+              <Route path="/settings/language" element={<SettingsLanguageView />} />
+              <Route path="/settings/ai" element={<SettingsAiView />} />
+              <Route path="/settings/storage" element={<SettingsStorageView />} />
+              <Route path="/settings/memory" element={<MemoryManagementView />} />
+              <Route path="/changelog" element={<ChangelogView />} />
+            </Routes>
+          </Suspense>
         </Layout>
       </HashRouter>
     </ErrorBoundary>

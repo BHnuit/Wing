@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { debounce } from '../utils/performance';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Share, MoreHorizontal, Bell, CheckCircle, RotateCw, Loader2, Pencil, History, Copy, Clipboard, Trash2, MessageSquare, Infinity, X } from 'lucide-react';
 import { getLocalDateString } from '../utils/date';
@@ -165,8 +166,9 @@ const JournalDetail: React.FC = () => {
     mainElement.addEventListener('scroll', handleMainScroll, { passive: true });
     window.addEventListener('scroll', handleWindowScroll, { passive: true });
     
-    // 监听窗口大小变化
-    window.addEventListener('resize', checkTitleVisibility, { passive: true });
+    // 监听窗口大小变化（使用防抖优化性能）
+    const debouncedCheckTitleVisibility = debounce(checkTitleVisibility, 150);
+    window.addEventListener('resize', debouncedCheckTitleVisibility, { passive: true });
 
     return () => {
       observer.disconnect();
@@ -175,7 +177,7 @@ const JournalDetail: React.FC = () => {
       }
       mainElement.removeEventListener('scroll', handleMainScroll);
       window.removeEventListener('scroll', handleWindowScroll);
-      window.removeEventListener('resize', checkTitleVisibility);
+      window.removeEventListener('resize', debouncedCheckTitleVisibility);
     };
 
     return () => {
@@ -189,17 +191,29 @@ const JournalDetail: React.FC = () => {
    * 当 session 不存在或无 IMAGE 时返回 []，由 MarkdownRenderer 使用 entry.images。
    * 欢迎日记为静态介绍，不关联当日记录，故不取 session 图片，避免记录页当天添加的图片误显示在欢迎正文底部。
    */
+  /**
+   * 优化：合并多次数组遍历为单次遍历，提升性能
+   */
   const sessionImageFragments = useMemo(() => {
     if (!entry) return [];
     if (entry.id === WELCOME_ENTRY_ID) return [];
     const date = getLocalDateString(new Date(entry.createdAt));
     const session = MockDataService.getSessionByDate(date);
-    const frags = (session?.fragments ?? [])
+    const fragments = session?.fragments ?? [];
+    
+    // 单次遍历：过滤、排序、映射和过滤空值
+    const imageFragments = fragments
       .filter((f) => f.type === FragmentType.IMAGE)
       .sort((a, b) => a.timestamp - b.timestamp);
-    return frags
-      .map((f) => f.imageData || (entry!.images && entry.images[f.id]) || '')
-      .filter((d): d is string => !!d && typeof d === 'string');
+    
+    const result: string[] = [];
+    for (const f of imageFragments) {
+      const data = f.imageData || (entry?.images && entry.images[f.id]) || '';
+      if (data && typeof data === 'string') {
+        result.push(data);
+      }
+    }
+    return result;
   }, [entry?.id, entry?.createdAt, entry?.images]);
 
   /**

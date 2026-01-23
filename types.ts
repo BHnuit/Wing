@@ -109,4 +109,53 @@ export interface AppSettings {
   writingStylePrompt?: string;
   /** 猫头鹰洞察的自定义提示语，留空使用默认（心理学视角的深度分析与鼓励，约 50–100 字） */
   insightPrompt?: string;
+  /** 是否启用长期记忆功能 */
+  enableLongTermMemory?: boolean;
+  /** 是否自动提取记忆（日记生成后） */
+  memoryExtractionAuto?: boolean;
+  /** 是否在生成日记时检索记忆（向AI传递记忆内容） */
+  memoryRetrievalEnabled?: boolean;
 }
+
+/** 记忆类型：语义记忆、情景记忆、程序性记忆 */
+export type MemoryType = 'semantic' | 'episodic' | 'procedural';
+
+/** 语义记忆：存储用户的基本事实信息 */
+export interface SemanticMemory {
+  id: string;
+  type: 'semantic';
+  key: string;           // 记忆键，如 "name", "location", "favorite_music"
+  value: string;          // 记忆值，如 "小夏", "成都", "五月天"
+  confidence: number;    // 置信度 0-1，多次提及则提高
+  sourceEntryIds: string[]; // 来源日记ID列表
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** 情景记忆：记录特定时间、地点的事件和情绪 */
+export interface EpisodicMemory {
+  id: string;
+  type: 'episodic';
+  event: string;          // 事件描述，如 "生日那天，我陪你听了歌"
+  emotion?: string;      // 情绪，如 "开心", "焦虑"
+  date: string;          // 日期 YYYY-MM-DD
+  context?: string;      // 上下文信息
+  sourceEntryId: string; // 来源日记ID
+  createdAt: number;
+}
+
+/** 程序性记忆：学习用户的交互偏好和行为模式 */
+export interface ProceduralMemory {
+  id: string;
+  type: 'procedural';
+  pattern: string;        // 行为模式，如 "不喜欢被打断"
+  preference: string;    // 偏好描述，如 "喜欢在夜晚倾诉"
+  trigger?: string;      // 触发条件，如 "心情不好时用'唉……'开头"
+  frequency: number;      // 出现频率
+  sourceEntryIds: string[]; // 来源日记ID列表
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** 联合记忆类型 */
+export type Memory = SemanticMemory | EpisodicMemory | ProceduralMemory;

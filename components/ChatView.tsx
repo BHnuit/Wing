@@ -1,10 +1,13 @@
 
 import React, { useState, useEffect, useRef, useMemo, useCallback, useLayoutEffect } from 'react';
+import { rafThrottle } from '../utils/performance';
 import { Send, CheckCircle2, Image as ImageIcon, Loader2, ChevronLeft, ChevronRight, Infinity } from 'lucide-react';
 import { EmptyStateOwl, LoadingOwl, OwlLogo } from './OwlAssets';
 import { MockDataService } from '../services/mockDataService';
 import { AiService, AiAPIError, getEffectiveApiKey, getModelResponseLanguage } from '../services/aiService';
 import { triggerRealtimeSyncIfEnabled } from '../services/webdavService';
+import { getRelevantMemories, buildMemoryContext, extractMemoriesFromEntry } from '../services/memoryService';
+import { IndexedDBStorage } from '../services/indexedDBStorage';
 import { DailySession, RawFragment, SessionStatus, WingEntry, FragmentType } from '../types';
 import { useSearchParams, Link } from 'react-router-dom';
 import { useTranslation } from '../i18n';
@@ -229,47 +232,47 @@ const ChatView: React.FC = () => {
    * 监听整个页面的 touchmove / wheel，用 requestAnimationFrame 取「当前滚动位置」后做输入栏显隐：
    * 向下滑隐藏，向上或到顶/到底显示。优先读 main，没有则读 window/document。
    * 当页面滚动时，如果输入框处于聚焦状态，自动失焦。
+   * 使用 rafThrottle 优化性能，避免过度触发。
    */
   const INPUT_BAR_SCROLL_THRESHOLD = 5;
   const INPUT_BAR_BOTTOM_MARGIN = 10;
   useEffect(() => {
-    const run = () => {
-      requestAnimationFrame(() => {
-        const main = scrollRef.current?.closest('main') as HTMLElement | null;
-        const useWindow = !main || main.scrollHeight <= main.clientHeight;
-        const scrollTop = useWindow ? window.scrollY : main!.scrollTop;
-        const scrollHeight = useWindow ? document.documentElement.scrollHeight : main!.scrollHeight;
-        const clientHeight = useWindow ? window.innerHeight : main!.clientHeight;
+    const run = rafThrottle(() => {
+      const main = scrollRef.current?.closest('main') as HTMLElement | null;
+      const useWindow = !main || main.scrollHeight <= main.clientHeight;
+      const scrollTop = useWindow ? window.scrollY : main!.scrollTop;
+      const scrollHeight = useWindow ? document.documentElement.scrollHeight : main!.scrollHeight;
+      const clientHeight = useWindow ? window.innerHeight : main!.clientHeight;
 
-        const last = lastMainScrollTopRef.current;
-        if (last < 0) {
-          lastMainScrollTopRef.current = scrollTop;
-          return;
-        }
-        
-        // 检测到滚动时，如果输入框聚焦则失焦（向上和向下滚动都触发）
-        // 但如果正在因为聚焦而滚动到底部，则不触发失焦
-        const delta = scrollTop - last;
-        if (Math.abs(delta) > INPUT_BAR_SCROLL_THRESHOLD && isInputFocusedRef.current && !isScrollingToBottomForFocusRef.current) {
-          textareaRef.current?.blur();
-        }
-        
-        if (scrollTop <= 0) {
-          setInputBarVisible(true);
-          lastMainScrollTopRef.current = scrollTop;
-          return;
-        }
-        const atBottom = scrollTop + clientHeight >= scrollHeight - INPUT_BAR_BOTTOM_MARGIN;
-        if (atBottom) {
-          setInputBarVisible(true);
-          lastMainScrollTopRef.current = scrollTop;
-          return;
-        }
+      const last = lastMainScrollTopRef.current;
+      if (last < 0) {
         lastMainScrollTopRef.current = scrollTop;
-        if (delta > INPUT_BAR_SCROLL_THRESHOLD) setInputBarVisible(false);
-        else if (delta < -INPUT_BAR_SCROLL_THRESHOLD) setInputBarVisible(true);
-      });
-    };
+        return;
+      }
+      
+      // 检测到滚动时，如果输入框聚焦则失焦（向上和向下滚动都触发）
+      // 但如果正在因为聚焦而滚动到底部，则不触发失焦
+      const delta = scrollTop - last;
+      if (Math.abs(delta) > INPUT_BAR_SCROLL_THRESHOLD && isInputFocusedRef.current && !isScrollingToBottomForFocusRef.current) {
+        textareaRef.current?.blur();
+      }
+      
+      if (scrollTop <= 0) {
+        setInputBarVisible(true);
+        lastMainScrollTopRef.current = scrollTop;
+        return;
+      }
+      const atBottom = scrollTop + clientHeight >= scrollHeight - INPUT_BAR_BOTTOM_MARGIN;
+      if (atBottom) {
+        setInputBarVisible(true);
+        lastMainScrollTopRef.current = scrollTop;
+        return;
+      }
+      lastMainScrollTopRef.current = scrollTop;
+      if (delta > INPUT_BAR_SCROLL_THRESHOLD) setInputBarVisible(false);
+      else if (delta < -INPUT_BAR_SCROLL_THRESHOLD) setInputBarVisible(true);
+    });
+    
     document.addEventListener('touchmove', run, { passive: true });
     document.addEventListener('wheel', run, { passive: true });
     window.addEventListener('scroll', run, { passive: true });
@@ -283,9 +286,19 @@ const ChatView: React.FC = () => {
   }, []);
 
   /**
+   * 检测是否为 Safari 浏览器
+   */
+  const isSafariBrowser = (): boolean => {
+    if (typeof navigator === 'undefined') return false;
+    const ua = navigator.userAgent.toLowerCase();
+    return /safari/.test(ua) && !/chrome/.test(ua) && !/chromium/.test(ua);
+  };
+
+  /**
    * 处理图片选择。
    * 兼容微信等移动端：放宽 file.type 校验（当 type 为空时按扩展名放行），
    * base64 转换使用 utils/imageToBase64（FileReader 超时后降级为 Canvas）。
+   * Safari 特殊处理：检测 Safari 浏览器并显示相应的错误提示。
    */
   const handleImageSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -328,10 +341,20 @@ const ChatView: React.FC = () => {
         showToast(t('storage_quota_exceeded'), 'error');
         return;
       }
+      
+      // 根据错误类型和浏览器类型显示不同的错误提示
       const isHeic =
         /\.heic$/i.test(file.name || '') ||
         (file.type || '').toLowerCase().includes('heic');
-      showToast(isHeic ? t('image_process_failed_heic') : t('image_process_failed'), 'error');
+      const isSafari = isSafariBrowser();
+      
+      if (isHeic) {
+        showToast(t('image_process_failed_heic'), 'error');
+      } else if (isSafari) {
+        showToast(t('image_process_failed_safari'), 'error');
+      } else {
+        showToast(t('image_process_failed'), 'error');
+      }
     }
 
     // 重置文件输入
@@ -399,8 +422,29 @@ const ChatView: React.FC = () => {
     try {
       setSynthStatus(isRegather ? t('synth_status_regather') : t('synth_status_start'));
       setSynthStatus(t('synth_status_preparing'));
+      
+      // 检索相关记忆并构建上下文（仅在启用检索且总记忆条数达到100条以上时）
+      let memoryContext = '';
+      if (settings.enableLongTermMemory && settings.memoryRetrievalEnabled === true) {
+        const allMemories = IndexedDBStorage.getMemories();
+        // 仅在总记忆条数达到100条以上时，才传递记忆内容
+        if (allMemories.length >= 100) {
+          const relevantMemories = getRelevantMemories(session.fragments, viewDate, settings);
+          if (relevantMemories.length > 0) {
+            memoryContext = buildMemoryContext(relevantMemories, lang);
+          }
+        }
+      }
+      
       setSynthStatus(t('synth_status_body'));
-      const { markdownContent } = await AiService.synthesizeJournalBody(session.fragments, lang, settings, 2, previousGeneration);
+      const { markdownContent } = await AiService.synthesizeJournalBody(
+        session.fragments, 
+        lang, 
+        settings, 
+        2, 
+        previousGeneration,
+        { customPrompt: memoryContext }
+      );
 
       setSynthStatus(t('synth_status_creating').replace('{date}', viewDate));
       const images: { [key: string]: string } = {};
@@ -429,16 +473,17 @@ const ChatView: React.FC = () => {
       setSession(MockDataService.getSessionByDate(viewDate)!);
 
       setSynthStatus(t('synth_status_meta'));
-      const meta = await AiService.synthesizeJournalMeta(markdownContent, lang, settings);
-      MockDataService.updateEntry(newEntry.id, { title: meta.title, summary: meta.summary, mood: meta.mood });
-
-      setSynthStatus(t('synth_status_insight'));
-      const { aiInsights, todos } = await AiService.synthesizeInsightAndTodos(
-        { title: meta.title, mood: meta.mood, summary: meta.summary, markdownContent },
-        lang,
-        settings
-      );
-      MockDataService.updateEntry(newEntry.id, { aiInsights, todos });
+      // 并行执行 meta 和 insight 的生成，减少等待时间
+      const [meta, { aiInsights, todos }] = await Promise.all([
+        AiService.synthesizeJournalMeta(markdownContent, lang, settings),
+        AiService.synthesizeInsightAndTodos(
+          { title: tempTitle, mood: '🌿', summary: '', markdownContent },
+          lang,
+          settings
+        )
+      ]);
+      const finalEntry = { ...newEntry, title: meta.title, summary: meta.summary, mood: meta.mood, aiInsights, todos };
+      MockDataService.updateEntry(newEntry.id, { title: meta.title, summary: meta.summary, mood: meta.mood, aiInsights, todos });
 
       setSynthStatus(t('synth_status_done'));
       const completedAt = Date.now();
@@ -448,6 +493,16 @@ const ChatView: React.FC = () => {
         gatherCompletions: [...(latest2.gatherCompletions ?? []), { completedAt, entryId: newEntry.id, title: meta.title }]
       });
       setSession(MockDataService.getSessionByDate(viewDate)!);
+      
+      // 异步提取记忆（如果启用）
+      if (settings.enableLongTermMemory && settings.memoryExtractionAuto !== false) {
+        showToast(t('memory_extracting'), 'info');
+        extractMemoriesFromEntry(finalEntry, settings).catch(err => {
+          console.error('提取记忆失败:', err);
+          // 不显示错误提示，避免干扰用户体验
+        });
+      }
+      
       /** 仅在收拢完成、展示「已生成《xx》」之后触发 WebDAV 同步，避免网络拥堵 */
       triggerRealtimeSyncIfEnabled(settings);
     } catch (error) {
@@ -664,6 +719,7 @@ const ChatView: React.FC = () => {
                           alt={fragment.content}
                           className="max-w-full h-auto object-cover"
                           style={{ maxHeight: '400px' }}
+                          loading="lazy"
                         />
                         {isEditing ? (
                           <div className="px-3 py-1.5 bg-twilight-cream/30 dark:bg-nocturnal-bg/40 border-t border-twilight-divider dark:border-nocturnal-secondary/20">

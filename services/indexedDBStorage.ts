@@ -4,12 +4,12 @@
  * 使用内存缓存 + 异步持久化，对外提供同步读、异步写的能力。
  */
 
-import { DailySession, WingEntry, AppSettings } from '../types';
+import { DailySession, WingEntry, AppSettings, Memory } from '../types';
 import { isQuotaExceededError } from '../utils/storage';
 
 const DB_NAME = 'wing_db';
-const DB_VERSION = 1;
-const STORES = { ENTRIES: 'entries', SESSIONS: 'sessions', SETTINGS: 'settings', META: 'meta' } as const;
+const DB_VERSION = 2; // 升级版本以添加 memories store
+const STORES = { ENTRIES: 'entries', SESSIONS: 'sessions', SETTINGS: 'settings', META: 'meta', MEMORIES: 'memories' } as const;
 
 const LS_KEYS = {
   ENTRIES: 'wing_entries',
@@ -22,6 +22,7 @@ const LS_KEYS = {
 let _entries: WingEntry[] = [];
 let _sessions: DailySession[] = [];
 let _settings: AppSettings | null = null;
+let _memories: Memory[] = [];
 let _initialized = false;
 let _db: IDBDatabase | null = null;
 let _initPromise: Promise<void> | null = null;
@@ -30,24 +31,62 @@ let _initPromise: Promise<void> | null = null;
  * 打开 IndexedDB，若不存在则创建 object stores
  */
 function openDB(): Promise<IDBDatabase> {
+  // 检查浏览器是否支持 IndexedDB
+  if (!window.indexedDB) {
+    return Promise.reject(new Error('浏览器不支持 IndexedDB，请使用现代浏览器（Chrome、Firefox、Safari、Edge）'));
+  }
+
   return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, DB_VERSION);
-    req.onerror = () => reject(req.error);
-    req.onsuccess = () => resolve(req.result);
+    let req: IDBOpenDBRequest;
+    try {
+      req = indexedDB.open(DB_NAME, DB_VERSION);
+    } catch (error) {
+      reject(error instanceof Error ? error : new Error(String(error)));
+      return;
+    }
+
+    req.onerror = () => {
+      const error = req.error || new Error('IndexedDB 打开失败');
+      reject(error);
+    };
+
+    req.onsuccess = () => {
+      if (!req.result) {
+        reject(new Error('IndexedDB 打开成功但未返回数据库实例'));
+        return;
+      }
+      resolve(req.result);
+    };
+
     req.onupgradeneeded = (e) => {
-      const db = (e.target as IDBOpenDBRequest).result;
-      if (!db.objectStoreNames.contains(STORES.ENTRIES)) {
-        db.createObjectStore(STORES.ENTRIES, { keyPath: 'id' });
+      try {
+        const db = (e.target as IDBOpenDBRequest).result;
+        if (!db.objectStoreNames.contains(STORES.ENTRIES)) {
+          db.createObjectStore(STORES.ENTRIES, { keyPath: 'id' });
+        }
+        if (!db.objectStoreNames.contains(STORES.SESSIONS)) {
+          db.createObjectStore(STORES.SESSIONS, { keyPath: 'id' });
+        }
+        if (!db.objectStoreNames.contains(STORES.SETTINGS)) {
+          db.createObjectStore(STORES.SETTINGS, { keyPath: 'key' });
+        }
+        if (!db.objectStoreNames.contains(STORES.META)) {
+          db.createObjectStore(STORES.META, { keyPath: 'key' });
+        }
+        if (!db.objectStoreNames.contains(STORES.MEMORIES)) {
+          const memoryStore = db.createObjectStore(STORES.MEMORIES, { keyPath: 'id' });
+          memoryStore.createIndex('type', 'type', { unique: false });
+          memoryStore.createIndex('date', 'date', { unique: false }); // 用于情景记忆
+          memoryStore.createIndex('key', 'key', { unique: false }); // 用于语义记忆
+        }
+      } catch (error) {
+        reject(error instanceof Error ? error : new Error(String(error)));
       }
-      if (!db.objectStoreNames.contains(STORES.SESSIONS)) {
-        db.createObjectStore(STORES.SESSIONS, { keyPath: 'id' });
-      }
-      if (!db.objectStoreNames.contains(STORES.SETTINGS)) {
-        db.createObjectStore(STORES.SETTINGS, { keyPath: 'key' });
-      }
-      if (!db.objectStoreNames.contains(STORES.META)) {
-        db.createObjectStore(STORES.META, { keyPath: 'key' });
-      }
+    };
+
+    req.onblocked = () => {
+      console.warn('IndexedDB 升级被阻塞，可能有其他标签页正在使用数据库');
+      // 不 reject，等待其他标签页关闭
     };
   });
 }
@@ -65,10 +104,35 @@ async function migrateFromLocalStorage(db: IDBDatabase): Promise<void> {
   const hasLS = rawEntries != null || rawSessions != null || rawSettings != null || rawInit != null;
   if (!hasLS) return;
 
-  const entries: WingEntry[] = rawEntries ? JSON.parse(rawEntries) : [];
-  const sessions: DailySession[] = rawSessions ? JSON.parse(rawSessions) : [];
-  const settings: AppSettings | null = rawSettings ? JSON.parse(rawSettings) : null;
-  const initialized = rawInit === '1';
+  let entries: WingEntry[] = [];
+  let sessions: DailySession[] = [];
+  let settings: AppSettings | null = null;
+  let initialized = false;
+
+  try {
+    entries = rawEntries ? JSON.parse(rawEntries) : [];
+    if (!Array.isArray(entries)) entries = [];
+  } catch (error) {
+    console.warn('解析 localStorage entries 失败，跳过迁移:', error);
+    entries = [];
+  }
+
+  try {
+    sessions = rawSessions ? JSON.parse(rawSessions) : [];
+    if (!Array.isArray(sessions)) sessions = [];
+  } catch (error) {
+    console.warn('解析 localStorage sessions 失败，跳过迁移:', error);
+    sessions = [];
+  }
+
+  try {
+    settings = rawSettings ? JSON.parse(rawSettings) : null;
+  } catch (error) {
+    console.warn('解析 localStorage settings 失败，跳过迁移:', error);
+    settings = null;
+  }
+
+  initialized = rawInit === '1';
 
   const putAll = <T>(storeName: string, items: T[]) => {
     return new Promise<void>((resolve, reject) => {
@@ -125,16 +189,18 @@ async function loadAllFromDB(db: IDBDatabase): Promise<void> {
       req.onsuccess = () => resolve(req.result);
     });
 
-  const [entries, sessions, settingsRow, metaRow] = await Promise.all([
+  const [entries, sessions, settingsRow, metaRow, memories] = await Promise.all([
     getAll<WingEntry>(STORES.ENTRIES),
     getAll<DailySession>(STORES.SESSIONS),
     getOne<{ key: string; value: AppSettings }>(STORES.SETTINGS, 'app'),
-    getOne<{ key: string; value: string }>(STORES.META, 'initialized')
+    getOne<{ key: string; value: string }>(STORES.META, 'initialized'),
+    getAll<Memory>(STORES.MEMORIES)
   ]);
 
   _entries = Array.isArray(entries) ? entries : [];
   _sessions = Array.isArray(sessions) ? sessions : [];
   _settings = settingsRow?.value ?? null;
+  _memories = Array.isArray(memories) ? memories : [];
   _initialized = metaRow?.value === '1';
 }
 
@@ -247,11 +313,57 @@ function persistMeta(key: string, value: string): void {
 }
 
 /**
+ * 持久化：写入单条 memory（put 覆盖同 id）
+ */
+function persistMemory(memory: Memory): void {
+  if (!_db) return;
+  const tx = _db.transaction(STORES.MEMORIES, 'readwrite');
+  const st = tx.objectStore(STORES.MEMORIES);
+  tx.onerror = () => {
+    const err = tx.error;
+    if (err && isQuotaExceededError(err)) {
+      window.dispatchEvent(new CustomEvent('wing_storage_error', { detail: { code: 'QUOTA_EXCEEDED' } }));
+    }
+  };
+  st.put(memory);
+}
+
+/**
+ * 持久化：删除单条 memory
+ */
+function persistMemoryDelete(id: string): void {
+  if (!_db) return;
+  const tx = _db.transaction(STORES.MEMORIES, 'readwrite');
+  tx.objectStore(STORES.MEMORIES).delete(id);
+}
+
+/**
+ * 持久化：覆盖写入全部 memories
+ */
+async function persistMemoriesReplace(memories: Memory[]): Promise<void> {
+  if (!_db) return;
+  return new Promise((resolve, reject) => {
+    const tx = _db!.transaction(STORES.MEMORIES, 'readwrite');
+    const st = tx.objectStore(STORES.MEMORIES);
+    tx.onerror = () => {
+      const err = tx.error;
+      if (err && isQuotaExceededError(err)) {
+        window.dispatchEvent(new CustomEvent('wing_storage_error', { detail: { code: 'QUOTA_EXCEEDED' } }));
+      }
+      reject(err);
+    };
+    tx.oncomplete = () => resolve();
+    st.clear();
+    memories.forEach((m) => st.put(m));
+  });
+}
+
+/**
  * 清空所有 IndexedDB 对象库
  */
 async function clearAllStores(): Promise<void> {
   if (!_db) return;
-  const stores = [STORES.ENTRIES, STORES.SESSIONS, STORES.SETTINGS, STORES.META];
+  const stores = [STORES.ENTRIES, STORES.SESSIONS, STORES.SETTINGS, STORES.META, STORES.MEMORIES];
   for (const name of stores) {
     await new Promise<void>((resolve, reject) => {
       const tx = _db!.transaction(name, 'readwrite');
@@ -350,6 +462,30 @@ export const IndexedDBStorage = {
     persistMeta('initialized', value ? '1' : '');
   },
 
+  getMemories(): Memory[] {
+    return _memories;
+  },
+
+  /** 追加或更新 memory 并持久化 */
+  putMemory(memory: Memory): void {
+    const i = _memories.findIndex((m) => m.id === memory.id);
+    if (i >= 0) _memories[i] = memory;
+    else _memories.push(memory);
+    persistMemory(memory);
+  },
+
+  /** 从内存移除 memory 并持久化删除 */
+  deleteMemory(id: string): void {
+    _memories = _memories.filter((m) => m.id !== id);
+    persistMemoryDelete(id);
+  },
+
+  /** 替换全部 memories 并持久化（可 await） */
+  async replaceMemories(memories: Memory[]): Promise<void> {
+    _memories = [...memories];
+    await persistMemoriesReplace(_memories);
+  },
+
   /**
    * 清空所有数据（内存 + IndexedDB），并关闭 DB。调用后需 reload。
    */
@@ -358,6 +494,7 @@ export const IndexedDBStorage = {
     _entries = [];
     _sessions = [];
     _settings = null;
+    _memories = [];
     _initialized = false;
     if (_db) {
       _db.close();

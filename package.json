@@ -1,7 +1,7 @@
 {
   "name": "wing---ethereal-ai-journal",
   "private": true,
-  "version": "1.0.0",
+  "version": "0.2.1",
   "description": "A privacy-focused, feather-light AI journal web application",
   "author": "Wing Team",
   "type": "module",

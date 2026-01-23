@@ -42,7 +42,7 @@ npm run build
 npm run preview
 ```
 
-> 部署说明、项目结构、技术栈、配置与开发计划等详见 [项目文档](docs/README.md)。
+> 部署说明、项目结构、技术栈、配置与开发计划等详见 [项目文档](docs/guide.md)。
 
 ## 许可证
 

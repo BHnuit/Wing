@@ -84,6 +84,12 @@ const SettingsAiView: React.FC = () => {
     setSettings((s) => ({ ...s, insightPrompt: v }));
   };
 
+  const handleEnableLongTermMemoryChange = (v: boolean) => {
+    MockDataService.updateSettings({ enableLongTermMemory: v });
+    setSettings((s) => ({ ...s, enableLongTermMemory: v }));
+  };
+
+
   const handleAiTestConnection = async () => {
     setAiTestStatus({ type: 'testing', message: t('ai_testing') });
     const result = await AiService.testConnection(settings);
@@ -299,6 +305,38 @@ const SettingsAiView: React.FC = () => {
               placeholder={t('insight_prompt_placeholder')}
               className="w-full text-sm bg-twilight-cream/50 dark:bg-nocturnal-bg/70 dark:text-nocturnal-primary border border-twilight-divider dark:border-nocturnal-secondary/25 rounded-2xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-twilight-amber/30 dark:focus:ring-nocturnal-accent/40 placeholder:dark:text-nocturnal-secondary resize-y"
             />
+          </div>
+        </div>
+      </section>
+
+      {/* 长期记忆选项 */}
+      <section>
+        <h3 className="text-xs font-bold uppercase tracking-wider text-twilight-duskLight dark:text-nocturnal-secondary mb-3">{t('memory_management')}</h3>
+        <div className="bg-twilight-cream dark:bg-nocturnal-surface rounded-3xl p-6 border border-twilight-divider dark:border-nocturnal-secondary/25 shadow-sm space-y-4">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex-1">
+              <label className="text-sm font-medium text-twilight-warm dark:text-nocturnal-secondary block mb-1">
+                {t('enable_long_term_memory')}
+              </label>
+              <p className="text-[10px] text-twilight-duskLight dark:text-nocturnal-secondary">
+                {t('enable_long_term_memory_hint')}
+              </p>
+            </div>
+            <button
+              onClick={() => handleEnableLongTermMemoryChange(!settings.enableLongTermMemory)}
+              className={`relative w-11 h-6 rounded-full transition-colors ${
+                settings.enableLongTermMemory
+                  ? 'bg-twilight-amber dark:bg-nocturnal-accent'
+                  : 'bg-twilight-dusk/20 dark:bg-nocturnal-secondary/30'
+              }`}
+              aria-label={t('enable_long_term_memory')}
+            >
+              <span
+                className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full transition-transform ${
+                  settings.enableLongTermMemory ? 'translate-x-5' : 'translate-x-0'
+                }`}
+              />
+            </button>
           </div>
         </div>
       </section>
