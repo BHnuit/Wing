@@ -20,20 +20,6 @@
   to = "/.netlify/functions/ai"
   status = 200
 
-# WebDAV 代理：/api/webdav/* -> Netlify Function，在服务端转发以规避浏览器 CORS
-# 使用 :splat 将路径通过 query 传入，避免 rewrite 后 event.path 在部分环境下丢失；force 避免被静态资源抢占
-# 注意：请求体限制约 6MB，备份 ZIP 过大会导致 413/500；客户端已做 5.5MB 预检提示
-[[redirects]]
-  from = "/api/webdav/*"
-  to = "/.netlify/functions/webdav?path=:splat"
-  status = 200
-  force = true
-
-[[redirects]]
-  from = "/api/webdav"
-  to = "/.netlify/functions/webdav"
-  status = 200
-
 # 单页应用路由重写规则（因为使用了 HashRouter，这个可能不需要，但保留以防万一）
 [[redirects]]
   from = "/*"

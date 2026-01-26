@@ -27,9 +27,6 @@ function buildSettings(p: {
     aiModels: model ? { [provider]: model } : undefined,
     aiModel: model,
     language: language || 'zh',
-    webdavUrl: '',
-    webdavUser: '',
-    webdavPass: '',
     writingStyle,
     writingStylePrompt,
     insightPrompt

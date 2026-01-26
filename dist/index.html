@@ -1,0 +1,118 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wing - AI日记</title>
+    <link rel="icon" type="image/svg+xml" href="/OwlLogo.svg" />
+    <link rel="apple-touch-icon" href="/OwlLogo.svg" />
+
+    <!-- Open Graph：全站统一分享卡片（不含动态 meta） -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Wing" />
+    <meta property="og:title" content="Wing - AI日记" />
+    <meta property="og:description" content="像黄昏的猫头鹰一样整理碎片思绪" />
+    <meta property="og:image" content="/og-image.svg" />
+    <!-- 若 Facebook/LinkedIn 不展示 SVG，可把 og-image.svg 导出为 1200×630 的 og-image.png 并改为 content="/og-image.png" -->
+
+    <!-- Twitter Card：与 OG 一致 -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Wing - AI日记" />
+    <meta name="twitter:description" content="像黄昏的猫头鹰一样整理碎片思绪" />
+    <meta name="twitter:image" content="/og-image.svg" />
+    <meta name="twitter:image:alt" content="Wing - AI日记" />
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        darkMode: 'class',
+        theme: {
+          extend: {
+            colors: {
+              /** 亮色模式：米白/道林纸质感，深咖啡主文字，蜂蜜金强调，浅卡其分割 */
+              twilight: {
+                bg: '#FAF9F4',
+                cream: '#F2EFE5',
+                surface: '#FFF8E7',
+                divider: '#E6DDCF',
+                charcoal: '#4A3B32',
+                warm: '#4A3B32',
+                dusk: '#4A3B32',
+                duskLight: '#8C7B70',
+                amber: '#D9A54C',
+                amberMuted: '#B07D48',
+              },
+              /** 暗色模式：忧郁、深沉、宁静，适合深夜独白 */
+              nocturnal: {
+                bg: '#1A1B26',
+                surface: '#24283B',
+                primary: '#A9B1D6',
+                secondary: '#787C99',
+                accent: '#7AA2F7',
+                accentPurple: '#BB9AF7',
+              }
+            }
+          }
+        }
+      }
+    </script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Playfair+Display:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&family=Noto+Serif+SC:wght@400;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/lxgw-wenkai-webfont@1.7.0/style.css">
+    <style>
+        html { font-size: 16px; }
+        html[data-font-size="large"] { font-size: 18px; }
+        html[data-font-size="medium"] { font-size: 16px; }
+        html[data-font-size="small"] { font-size: 14px; }
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background: #FAF9F4;
+            color: #4A3B32;
+        }
+        html.dark body {
+            background: #1A1B26;
+            color: #A9B1D6;
+        }
+        .serif {
+            font-family: 'Playfair Display', Georgia, serif;
+        }
+        /* 全站标题层级 h1–h6 规范：h1=text-4xl font-bold, h2=text-2xl font-bold, h3=text-xl font-semibold, h4=text-lg font-semibold, h5=text-base font-medium, h6=text-sm font-medium；标题均用 .serif */
+        /* 思源黑体 / 思源宋体 / 霞鹜文楷 时，标题继承 Layout 字体，与正文一致 */
+        [data-page-font="source-han-sans"] .serif,
+        [data-page-font="source-han-serif"] .serif,
+        [data-page-font="xlwk"] .serif {
+            font-family: inherit;
+        }
+        .glass {
+            background: rgba(242, 239, 229, 0.92);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid #E6DDCF;
+        }
+        html.dark .glass {
+            background: rgba(36, 40, 59, 0.92);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border-color: rgba(120, 124, 153, 0.25);
+        }
+        /* 亮色：浅卡其分割线色；暗色：沿用 nocturn 灰 */
+        ::-webkit-scrollbar { width: 4px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb {
+            background: #E6DDCF;
+            border-radius: 10px;
+        }
+        ::-webkit-scrollbar-thumb:hover { background: #D9D0C2; }
+        html.dark ::-webkit-scrollbar-thumb {
+            background: rgba(120, 124, 153, 0.35);
+        }
+        html.dark ::-webkit-scrollbar-thumb:hover {
+            background: rgba(120, 124, 153, 0.5);
+        }
+    </style>
+  <script type="module" crossorigin src="/assets/index-DKtNyR2E.js"></script>
+</head>
+<body>
+    <div id="root"></div>
+</body>
+</html>

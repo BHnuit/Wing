@@ -1,12 +1,11 @@
 /**
- * 设置二级：存储管理（保留编辑历史、实时同步、备份 API Key、云端备份 WebDAV、本地数据）
+ * 设置二级：存储管理（保留编辑历史、备份 API Key、本地数据导入导出）
  */
 
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Cloud, Download, Upload, Replace, RefreshCw, CheckCircle2, XCircle, Loader2, Trash2, Eye, EyeOff } from 'lucide-react';
+import { ArrowLeft, Download, Upload, Replace, Loader2, Trash2 } from 'lucide-react';
 import { MockDataService } from '../services/mockDataService';
-import { createWebDAVService, WebDAVService } from '../services/webdavService';
 import { downloadData, importData, replaceData, replaceDataFromSplit, importDataFromSplit, importDataFromFolder, replaceDataFromFolder } from '../services/dataService';
 import { getLocalDateString } from '../utils/date';
 import { useTranslation } from '../i18n';
@@ -17,15 +16,7 @@ const SettingsStorageView: React.FC = () => {
   const { showToast, ToastContainer } = useToast();
   const [settings, setSettings] = useState(MockDataService.getSettings());
   const t = useTranslation(settings.language);
-  const [syncStatus, setSyncStatus] = useState<{ type: 'idle' | 'testing' | 'syncing' | 'success' | 'error'; message?: string }>({ type: 'idle' });
   const [showClearModal, setShowClearModal] = useState(false);
-  const [showRestoreModal, setShowRestoreModal] = useState(false);
-  const [restoreMode, setRestoreMode] = useState<'import' | 'replace'>('import');
-  const [restoreFolders, setRestoreFolders] = useState<{ name: string; lastModified?: number }[]>([]);
-  const [restoreSelected, setRestoreSelected] = useState('');
-  const [restoreLoading, setRestoreLoading] = useState(false);
-  /** 是否明文显示 WebDAV 密码，默认打码 */
-  const [showWebdavPass, setShowWebdavPass] = useState(false);
   /** 显示导入方式选择弹窗 */
   const [showImportModal, setShowImportModal] = useState(false);
   /** 显示替换方式选择弹窗 */
@@ -41,151 +32,15 @@ const SettingsStorageView: React.FC = () => {
     return () => window.removeEventListener('wing_settings_updated', h);
   }, []);
 
-  useEffect(() => {
-    if (!settings.webdavUrl) {
-      MockDataService.updateSettings({ webdavUrl: 'https://dav.jianguoyun.com/dav/' });
-      setSettings((s) => ({ ...s, webdavUrl: 'https://dav.jianguoyun.com/dav/' }));
-    }
-  }, [settings.webdavUrl]);
 
   const handleKeepEditHistoryChange = (v: boolean) => {
     MockDataService.updateSettings({ keepEditHistory: v });
     setSettings((s) => ({ ...s, keepEditHistory: v }));
   };
 
-  const handleRealtimeWebdavSyncChange = (v: boolean) => {
-    MockDataService.updateSettings({ realtimeWebdavSync: v });
-    setSettings((s) => ({ ...s, realtimeWebdavSync: v }));
-  };
-
   const handleBackupApiKeysChange = (v: boolean) => {
     MockDataService.updateSettings({ backupApiKeys: v });
     setSettings((s) => ({ ...s, backupApiKeys: v }));
-  };
-
-  const handleWebDAVChange = (f: 'webdavUrl' | 'webdavUser' | 'webdavPass', value: string) => {
-    if (f === 'webdavUrl' && !value) value = 'https://dav.jianguoyun.com/dav/';
-    MockDataService.updateSettings({ [f]: value });
-    setSettings((s) => ({ ...s, [f]: value }));
-  };
-
-  const handleTestConnection = async () => {
-    setSyncStatus({ type: 'testing', message: t('webdav_test') });
-    const svc = createWebDAVService(settings);
-    if (!svc) {
-      setSyncStatus({ type: 'error', message: '请先填写 WebDAV 配置' });
-      setTimeout(() => setSyncStatus({ type: 'idle' }), 3000);
-      return;
-    }
-    const r = await svc.testConnection();
-    setSyncStatus({ type: r.success ? 'success' : 'error', message: r.message });
-    setTimeout(() => setSyncStatus({ type: 'idle' }), 3000);
-  };
-
-  /** 备份到云盘：单 ZIP 或分卷上传；若返回 fallbackDownload 则触发下载并提示用户手动上传云盘（方案3 兜底） */
-  const handleBackup = async () => {
-    const onProgress = (key: string, extra?: { current?: number; total?: number }) => {
-      const msg = extra != null && extra.current != null && extra.total != null
-        ? `${t(key)} (${extra.current}/${extra.total})`
-        : t(key);
-      setSyncStatus({ type: 'syncing', message: msg });
-    };
-    setSyncStatus({ type: 'syncing', message: t('webdav_backup_preparing') });
-    const svc = createWebDAVService(settings);
-    if (!svc) {
-      setSyncStatus({ type: 'error', message: '请先填写 WebDAV 配置' });
-      setTimeout(() => setSyncStatus({ type: 'idle' }), 3000);
-      return;
-    }
-    const entries = MockDataService.getEntries();
-    const sessions = MockDataService.getSessions();
-    const r = await svc.backupData(entries, sessions, onProgress);
-
-    if (r.fallbackDownload) {
-      const url = URL.createObjectURL(r.fallbackDownload);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `wing-backup-${getLocalDateString()}.zip`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-      showToast(t('backup_fallback_saved_local'), 'success');
-    }
-    setSyncStatus({ type: r.success ? 'success' : 'error', message: r.success ? t('webdav_backup_success') : r.message });
-    setTimeout(() => setSyncStatus({ type: 'idle' }), 3000);
-  };
-
-  /** 打开从云盘导入/替换弹窗：拉取按日期命名的备份文件夹列表，mode 决定后续 import 或 replace */
-  const handleRestoreOpen = async (mode: 'import' | 'replace') => {
-    const svc = createWebDAVService(settings);
-    if (!svc) {
-      showToast('请先填写 WebDAV 配置', 'error');
-      return;
-    }
-    setRestoreMode(mode);
-    setRestoreLoading(true);
-    setShowRestoreModal(true);
-    setRestoreFolders([]);
-    setRestoreSelected('');
-    const r = await svc.listBackupFolders();
-    setRestoreLoading(false);
-    if (!r.success || !r.folders?.length) {
-      showToast(r.success ? t('webdav_no_backup') : r.message, 'error');
-      setShowRestoreModal(false);
-      return;
-    }
-    setRestoreFolders(r.folders);
-    setRestoreSelected(r.folders[0].name);
-  };
-
-  /** 从云盘导入或替换：按选中的日期文件夹拉取文件、分组后下载单文件或分卷，再走 import/replace */
-  const handleRestoreConfirm = async () => {
-    if (!restoreSelected) return;
-    const confirmMsg = restoreMode === 'replace' ? t('confirm_replace') : t('webdav_import_confirm');
-    if (!window.confirm(confirmMsg)) return;
-    const svc = createWebDAVService(settings);
-    if (!svc) {
-      showToast('请先填写 WebDAV 配置', 'error');
-      return;
-    }
-    setSyncStatus({ type: 'syncing', message: restoreMode === 'import' ? t('webdav_importing') : t('webdav_replacing') });
-    setShowRestoreModal(false);
-
-    const fr = await svc.listBackupFilesInFolder(restoreSelected);
-    if (!fr.success || !fr.files?.length) {
-      setSyncStatus({ type: 'error', message: fr.success ? t('webdav_folder_empty') : fr.message });
-      setTimeout(() => setSyncStatus({ type: 'idle' }), 3000);
-      return;
-    }
-    const groups = WebDAVService.groupBackupSets(fr.files, restoreSelected);
-    const set = groups.single[0] ?? groups.split[0];
-    if (!set) {
-      setSyncStatus({ type: 'error', message: t('webdav_folder_empty') });
-      setTimeout(() => setSyncStatus({ type: 'idle' }), 3000);
-      return;
-    }
-
-    const downSet = set && 'jsonName' in set
-      ? { type: 'split' as const, folder: set.folder, jsonName: set.jsonName, imageNames: set.imageNames }
-      : { type: 'single' as const, folder: set.folder, name: set.name };
-    const down = await svc.downloadBackupSet(downSet);
-    if ('success' in down && down.success === false) {
-      setSyncStatus({ type: 'error', message: down.message });
-      setTimeout(() => setSyncStatus({ type: 'idle' }), 3000);
-      return;
-    }
-    const r =
-      down.type === 'single'
-        ? restoreMode === 'import'
-          ? await importData(down.file)
-          : await replaceData(down.file)
-        : restoreMode === 'import'
-          ? await importDataFromSplit(down.jsonContent, down.imageZipBlobs)
-          : await replaceDataFromSplit(down.jsonContent, down.imageZipBlobs);
-    setSyncStatus({ type: r.success ? 'success' : 'error', message: r.message });
-    setTimeout(() => setSyncStatus({ type: 'idle' }), 3000);
-    if (r.success) setTimeout(() => window.location.reload(), 1500);
   };
 
   const handleExport = async () => {
@@ -295,106 +150,8 @@ const SettingsStorageView: React.FC = () => {
 
       <div className="bg-twilight-cream dark:bg-nocturnal-surface rounded-3xl p-4 border border-twilight-divider dark:border-nocturnal-secondary/25 shadow-sm [&>div:last-child]:border-b-0">
         {toggle(!!settings.keepEditHistory, handleKeepEditHistoryChange, t('keep_edit_history'), t('keep_edit_history_hint'))}
-        {toggle(!!settings.realtimeWebdavSync, handleRealtimeWebdavSyncChange, t('realtime_webdav_sync'), t('realtime_webdav_sync_hint'))}
         {toggle(settings.backupApiKeys !== false, handleBackupApiKeysChange, t('backup_api_keys'), t('backup_api_keys_hint'))}
       </div>
-
-      <section>
-        <h3 className="text-xs font-bold uppercase tracking-wider text-twilight-duskLight dark:text-nocturnal-secondary mb-3">{t('cloud_backup')}</h3>
-        <div className="bg-twilight-cream dark:bg-nocturnal-surface rounded-3xl p-6 border border-twilight-divider dark:border-nocturnal-secondary/25 shadow-sm space-y-4">
-          <div className="space-y-2">
-            <label className="text-sm font-medium text-twilight-warm dark:text-nocturnal-secondary">Server URL</label>
-            <input
-              type="text"
-              value={settings.webdavUrl}
-              onChange={(e) => handleWebDAVChange('webdavUrl', e.target.value)}
-              placeholder={t('webdav_url_placeholder')}
-              className="w-full bg-twilight-cream/50 dark:bg-nocturnal-bg/70 dark:text-nocturnal-primary border border-twilight-divider dark:border-nocturnal-secondary/25 rounded-2xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-twilight-amber/30 dark:focus:ring-nocturnal-accent/40 placeholder:dark:text-nocturnal-secondary"
-            />
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <label className="text-sm font-medium text-twilight-warm dark:text-nocturnal-secondary">Username</label>
-              <input
-                type="text"
-                value={settings.webdavUser}
-                onChange={(e) => handleWebDAVChange('webdavUser', e.target.value)}
-                placeholder={t('webdav_username_placeholder')}
-                className="w-full bg-twilight-cream/50 dark:bg-nocturnal-bg/70 dark:text-nocturnal-primary border border-twilight-divider dark:border-nocturnal-secondary/25 rounded-2xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-twilight-amber/30 dark:focus:ring-nocturnal-accent/40 placeholder:dark:text-nocturnal-secondary"
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm font-medium text-twilight-warm dark:text-nocturnal-secondary">Password</label>
-              <div className="relative">
-                <input
-                  type={showWebdavPass ? 'text' : 'password'}
-                  value={settings.webdavPass}
-                  onChange={(e) => handleWebDAVChange('webdavPass', e.target.value)}
-                  placeholder={t('webdav_password_placeholder')}
-                  className="w-full bg-twilight-cream/50 dark:bg-nocturnal-bg/70 dark:text-nocturnal-primary border border-twilight-divider dark:border-nocturnal-secondary/25 rounded-2xl px-4 py-3 pr-12 focus:outline-none focus:ring-2 focus:ring-twilight-amber/30 dark:focus:ring-nocturnal-accent/40 placeholder:dark:text-nocturnal-secondary"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowWebdavPass((s) => !s)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 p-1 rounded-lg text-twilight-duskLight dark:text-nocturnal-secondary hover:bg-twilight-dusk/10 dark:hover:bg-nocturnal-surface"
-                  aria-label={showWebdavPass ? t('secret_hide') : t('secret_show')}
-                >
-                  {showWebdavPass ? <EyeOff size={18} /> : <Eye size={18} />}
-                </button>
-              </div>
-            </div>
-          </div>
-          <p className="text-[10px] text-twilight-duskLight dark:text-nocturnal-secondary">{t('webdav_help')}</p>
-          <div className="flex flex-col gap-3">
-            <div className="flex gap-3">
-              <button
-                onClick={handleTestConnection}
-                disabled={syncStatus.type === 'testing' || syncStatus.type === 'syncing'}
-                className="flex-1 flex items-center justify-center gap-2 bg-twilight-cream/60 dark:bg-nocturnal-bg/60 text-twilight-charcoal dark:text-nocturnal-primary px-4 py-2 rounded-xl font-medium hover:bg-twilight-dusk/10 dark:hover:bg-nocturnal-surface disabled:opacity-50 border border-twilight-divider dark:border-nocturnal-secondary/25"
-              >
-                {syncStatus.type === 'testing' ? <Loader2 className="animate-spin" size={16} /> : <RefreshCw size={16} />}
-                {t('webdav_test')}
-              </button>
-              <button
-                onClick={handleBackup}
-                disabled={syncStatus.type === 'testing' || syncStatus.type === 'syncing'}
-                className="flex-1 flex items-center justify-center gap-2 bg-twilight-amber dark:bg-nocturnal-accent text-twilight-charcoal dark:text-white px-4 py-2 rounded-xl font-medium hover:bg-twilight-amberMuted dark:hover:bg-nocturnal-accent/90 disabled:opacity-50"
-              >
-                {syncStatus.type === 'syncing' ? <Loader2 className="animate-spin" size={16} /> : <Cloud size={16} />}
-                {t('webdav_backup')}
-              </button>
-            </div>
-            <div className="flex gap-3">
-              <button
-                onClick={() => handleRestoreOpen('import')}
-                disabled={syncStatus.type === 'testing' || syncStatus.type === 'syncing'}
-                className="flex-1 flex items-center justify-center gap-2 bg-twilight-cream/60 dark:bg-nocturnal-bg/60 text-twilight-charcoal dark:text-nocturnal-primary px-4 py-2 rounded-xl font-medium hover:bg-twilight-dusk/10 dark:hover:bg-nocturnal-surface disabled:opacity-50 border border-twilight-divider dark:border-nocturnal-secondary/25"
-              >
-                <Upload size={16} />
-                {t('webdav_import')}
-              </button>
-              <button
-                onClick={() => handleRestoreOpen('replace')}
-                disabled={syncStatus.type === 'testing' || syncStatus.type === 'syncing'}
-                className="flex-1 flex items-center justify-center gap-2 bg-twilight-cream/60 dark:bg-nocturnal-bg/60 text-twilight-charcoal dark:text-nocturnal-primary px-4 py-2 rounded-xl font-medium hover:bg-twilight-dusk/10 dark:hover:bg-nocturnal-surface disabled:opacity-50 border border-twilight-divider dark:border-nocturnal-secondary/25"
-              >
-                <Replace size={16} />
-                {t('webdav_replace')}
-              </button>
-            </div>
-          </div>
-          {syncStatus.type !== 'idle' && (
-            <div
-              className={`flex items-center gap-2 px-4 py-2 rounded-xl ${
-                syncStatus.type === 'success' ? 'bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-300' : syncStatus.type === 'error' ? 'bg-rose-50 dark:bg-rose-900/30 text-rose-700 dark:text-rose-300' : 'bg-blue-50 dark:bg-nocturnal-surface text-blue-700 dark:text-nocturnal-primary'
-              }`}
-            >
-              {syncStatus.type === 'success' ? <CheckCircle2 size={16} /> : syncStatus.type === 'error' ? <XCircle size={16} /> : <Loader2 className="animate-spin" size={16} />}
-              <span className="text-sm">{syncStatus.message}</span>
-            </div>
-          )}
-        </div>
-      </section>
 
       <section>
         <h3 className="text-xs font-bold uppercase tracking-wider text-twilight-duskLight dark:text-nocturnal-secondary mb-3">{t('local_data')}</h3>
@@ -539,53 +296,6 @@ const SettingsStorageView: React.FC = () => {
         </div>
       )}
 
-      {showRestoreModal && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/20" onClick={() => setShowRestoreModal(false)}>
-          <div
-            className="bg-twilight-cream dark:bg-nocturnal-surface rounded-2xl p-6 max-w-sm w-full mx-4 shadow-xl border border-twilight-divider dark:border-nocturnal-secondary/20"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h3 className="serif text-xl font-semibold text-twilight-charcoal dark:text-nocturnal-primary mb-3">{t('webdav_select_date')}</h3>
-            {restoreLoading ? (
-              <div className="flex items-center justify-center gap-2 py-8 text-twilight-duskLight dark:text-nocturnal-secondary">
-                <Loader2 className="animate-spin" size={20} />
-                <span>{t('webdav_loading_list')}</span>
-              </div>
-            ) : (
-              <>
-                <select
-                  value={restoreSelected}
-                  onChange={(e) => setRestoreSelected(e.target.value)}
-                  className="w-full bg-twilight-cream/50 dark:bg-nocturnal-bg/70 dark:text-nocturnal-primary border border-twilight-divider dark:border-nocturnal-secondary/25 rounded-xl px-4 py-3 mb-4 focus:outline-none focus:ring-2 focus:ring-twilight-amber/30 dark:focus:ring-nocturnal-accent/40"
-                >
-                  {restoreFolders.map((f) => (
-                    <option key={f.name} value={f.name}>
-                      {f.name}{f.lastModified ? ` (${new Date(f.lastModified).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' })})` : ''}
-                    </option>
-                  ))}
-                </select>
-                <p className="text-[11px] text-twilight-duskLight dark:text-nocturnal-secondary mb-4">
-                  {restoreMode === 'replace' ? t('confirm_replace') : t('webdav_import_confirm')}
-                </p>
-                <div className="flex flex-col gap-2">
-                  <button
-                    onClick={handleRestoreConfirm}
-                    className="w-full py-3 px-4 bg-twilight-amber dark:bg-nocturnal-accent text-twilight-charcoal dark:text-white rounded-xl font-medium hover:bg-twilight-amberMuted dark:hover:bg-nocturnal-accent/90"
-                  >
-                    {restoreMode === 'replace' ? t('webdav_replace') : t('webdav_import')}
-                  </button>
-                  <button
-                    onClick={() => setShowRestoreModal(false)}
-                    className="w-full py-2 text-twilight-duskLight dark:text-nocturnal-secondary text-sm hover:text-twilight-warm dark:hover:text-nocturnal-primary"
-                  >
-                    {t('cancel')}
-                  </button>
-                </div>
-              </>
-            )}
-          </div>
-        </div>
-      )}
 
       <ToastContainer />
     </div>

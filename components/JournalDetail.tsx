@@ -6,7 +6,6 @@ import { getLocalDateString } from '../utils/date';
 import html2canvas from 'html2canvas';
 import { MockDataService } from '../services/mockDataService';
 import { AiService, AiAPIError, getEffectiveApiKey, getModelResponseLanguage } from '../services/aiService';
-import { triggerRealtimeSyncIfEnabled } from '../services/webdavService';
 import { useTranslation } from '../i18n';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import { useToast } from './ErrorToast';
@@ -232,7 +231,6 @@ const JournalDetail: React.FC = () => {
     const next = entry.todos.map((t, j) => (j === index ? { ...t, ...patch } : t));
     MockDataService.updateEntry(entry.id, { todos: next });
     setEntry({ ...entry, todos: next });
-    triggerRealtimeSyncIfEnabled(settings);
   };
 
   /** 删除单条待办（需在二次确认后调用） */
@@ -241,7 +239,6 @@ const JournalDetail: React.FC = () => {
     const next = entry.todos.filter((_, i) => i !== index);
     MockDataService.updateEntry(entry.id, { todos: next });
     setEntry({ ...entry, todos: next });
-    triggerRealtimeSyncIfEnabled(settings);
     setDeleteTodoIndex(null);
     setEditingTodoIndex(null);
     setPriorityMenuIndex(null);
@@ -359,7 +356,6 @@ const JournalDetail: React.FC = () => {
     }
     MockDataService.updateEntry(entry.id, updates);
     setEntry({ ...entry, ...updates });
-    triggerRealtimeSyncIfEnabled(settings);
     setIsEditing(false);
     showToast(t('edit_success'), 'success', 2000);
   };
@@ -394,7 +390,6 @@ const JournalDetail: React.FC = () => {
     }
     MockDataService.updateEntry(entry.id, updates);
     setEntry({ ...entry, ...updates });
-    triggerRealtimeSyncIfEnabled(settings);
     showToast(t('edit_success'), 'success', 2000);
     setShowHistory(false);
   };
@@ -412,7 +407,6 @@ const JournalDetail: React.FC = () => {
       const insight = await AiService.regenerateInsight(entry, getModelResponseLanguage(settings), settings);
       MockDataService.updateEntry(entry.id, { aiInsights: insight });
       setEntry({ ...entry, aiInsights: insight });
-      triggerRealtimeSyncIfEnabled(settings);
       showToast(t('insight_regen_success'), 'success', 2000);
     } catch (err) {
       console.error('Regenerate insight failed:', err);
@@ -478,7 +472,6 @@ const JournalDetail: React.FC = () => {
         };
         MockDataService.updateEntry(entry.id, updates);
         setEntry({ ...entry, ...updates });
-        triggerRealtimeSyncIfEnabled(settings);
         showToast(t('regen_success'), 'success', 2000);
         setCustomRegenPrompt('');
       } else {
@@ -499,7 +492,6 @@ const JournalDetail: React.FC = () => {
           session.finalEntryId = newEntry.id;
           MockDataService.saveSession(session);
         }
-        triggerRealtimeSyncIfEnabled(settings);
         showToast(t('regen_success'), 'success', 2000);
         setCustomRegenPrompt('');
         navigate(`/journal/${newEntry.id}`);
@@ -554,7 +546,6 @@ const JournalDetail: React.FC = () => {
     };
     try {
       MockDataService.saveEntry(newEntry);
-      triggerRealtimeSyncIfEnabled(settings);
       showToast(t('copy_as_new_success'), 'success', 2000);
       navigate(`/journal/${newEntry.id}`);
     } catch (e) {
@@ -568,7 +559,6 @@ const JournalDetail: React.FC = () => {
   const doDelete = () => {
     if (!entry) return;
     MockDataService.deleteEntry(entry.id);
-    triggerRealtimeSyncIfEnabled(settings);
     navigate('/journal');
     showToast(t('delete_success'), 'success', 2000);
   };

@@ -28,7 +28,7 @@ Wing 的名字承载着双重意象：**羽毛笔**与**翅膀**。
 # 为什么能够放心使用
 
 - **本地记录**：你的碎片与日记首先保存在本机（浏览器本地存储），不会经过任何第三方服务器，只有你自己可以看到你的内容。
-- **支持备份**：通过 WebDAV 将数据同步到你自己选择的云端，或导出为 JSON 文件，数据始终由你掌控，尽可能减少丢失风险。
+- **支持备份**：可以导出为 JSON 文件，数据始终由你掌控，尽可能减少丢失风险。
 - **自选模型**：AI 合成使用你在「设置」→「AI 配置」中自行添加的 API（如 Gemini、OpenAI、DeepSeek 等），密钥仅存在本地，应用本身不会收集或上传。
 
 ---
@@ -58,7 +58,7 @@ Like a quill, it captures fragments of life with a light touch; like an owl fold
 # Why You Can Use It With Confidence
 
 - **Local-first**: Your fragments and journals are stored on your device (browser localStorage) first. They never pass through any third-party servers—only you can see your content.
-- **Backup support**: Sync to a cloud of your choice via WebDAV, or export as JSON. Your data stays in your control, to minimize the risk of loss.
+- **Backup support**: Export as JSON. Your data stays in your control, to minimize the risk of loss.
 - **Your choice of model**: Synthesis uses the API you configure in **Settings → AI** (e.g. Gemini, OpenAI, DeepSeek). Keys are stored only on your device; the app does not collect or upload them.
 
 ---

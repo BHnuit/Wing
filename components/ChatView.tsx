@@ -5,7 +5,6 @@ import { Send, CheckCircle2, Image as ImageIcon, Loader2, ChevronLeft, ChevronRi
 import { EmptyStateOwl, LoadingOwl, OwlLogo } from './OwlAssets';
 import { MockDataService } from '../services/mockDataService';
 import { AiService, AiAPIError, getEffectiveApiKey, getModelResponseLanguage } from '../services/aiService';
-import { triggerRealtimeSyncIfEnabled } from '../services/webdavService';
 import { getRelevantMemories, buildMemoryContext, extractMemoriesFromEntry } from '../services/memoryService';
 import { IndexedDBStorage } from '../services/indexedDBStorage';
 import { DailySession, RawFragment, SessionStatus, WingEntry, FragmentType } from '../types';
@@ -330,7 +329,6 @@ const ChatView: React.FC = () => {
       );
       if (fragment) {
         setSession(MockDataService.getSessionByDate(viewDate)!);
-        triggerRealtimeSyncIfEnabled(settings);
         setShowSuccess(true);
         if ('vibrate' in navigator) navigator.vibrate(50);
         setTimeout(() => setShowSuccess(false), 1500);
@@ -368,7 +366,6 @@ const ChatView: React.FC = () => {
     const s = session ?? MockDataService.getOrCreateSessionByDate(viewDate);
     MockDataService.addFragment(s.id, input);
     setSession(MockDataService.getSessionByDate(viewDate)!);
-    triggerRealtimeSyncIfEnabled(settings);
     setInput('');
     setShowSuccess(true);
     if ('vibrate' in navigator) navigator.vibrate(50);
@@ -390,7 +387,6 @@ const ChatView: React.FC = () => {
     if (frag.type === FragmentType.TEXT && !editDraft.trim()) return;
     MockDataService.updateFragment(session.id, editingId, editDraft);
     setSession(MockDataService.getSessionByDate(viewDate)!);
-    triggerRealtimeSyncIfEnabled(settings);
     setEditingId(null);
   };
 
@@ -502,9 +498,6 @@ const ChatView: React.FC = () => {
           // 不显示错误提示，避免干扰用户体验
         });
       }
-      
-      /** 仅在收拢完成、展示「已生成《xx》」之后触发 WebDAV 同步，避免网络拥堵 */
-      triggerRealtimeSyncIfEnabled(settings);
     } catch (error) {
       console.error('Synthesis failed:', error);
       if ((error as { code?: string })?.code === 'QUOTA_EXCEEDED') {

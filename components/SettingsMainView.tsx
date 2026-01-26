@@ -16,7 +16,7 @@ const ROWS = 6;
 const MAX_DAYS = 365;
 
 /** 应用版本号，内测阶段以 0 开头，便于在设置页底部展示 */
-const APP_VERSION = '0.2.0';
+const APP_VERSION = '0.2.1';
 
 /** 最近 n 天的 YYYY-MM-DD 列表（从旧到新），使用本地时区 */
 function getDateList(n: number): string[] {

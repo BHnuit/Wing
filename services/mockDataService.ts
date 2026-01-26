@@ -15,15 +15,11 @@ const DEFAULT_SETTINGS: AppSettings = {
   aiProvider: 'gemini',
   aiBaseUrl: '',
   aiModels: {},
-  webdavUrl: '',
-  webdavUser: '',
-  webdavPass: '',
   language: 'zh',
   theme: 'system',
   pageFont: 'system',
   modelLanguage: 'same',
   keepEditHistory: false,
-  realtimeWebdavSync: false,
   backupApiKeys: true,
   writingStyle: 'prose',
   writingStylePrompt: '',
@@ -224,7 +220,7 @@ export const MockDataService = {
   replaceSessions: (sessions: DailySession[]): Promise<void> => IndexedDBStorage.replaceSessions(sessions),
 
   /**
-   * 清除本地数据并刷新页面；同时清空云端备份设置（WebDAV）、各供应商 API Key，重置「已初始化」标记，使下次加载时重新注入欢迎日记。
+   * 清除本地数据并刷新页面；同时清空各供应商 API Key，重置「已初始化」标记，使下次加载时重新注入欢迎日记。
    */
   clearData: async (): Promise<void> => {
     await IndexedDBStorage.clearAll();
