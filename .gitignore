@@ -4,3 +4,6 @@
 /test-results/
 /playwright-report/
 node_modules
+
+# 临时文件
+/temp-agent-skills/
